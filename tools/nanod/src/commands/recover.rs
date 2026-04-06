@@ -2,10 +2,11 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use espflash::connection::ResetBeforeOperation;
 
 use crate::device::connection;
 use crate::device::constants::*;
-use crate::util::progress;
+use crate::util::progress::FlashProgress;
 use crate::validate::binary;
 
 pub fn run(firmware: &Path, port: Option<&str>) -> Result<()> {
@@ -17,23 +18,28 @@ pub fn run(firmware: &Path, port: Option<&str>) -> Result<()> {
     println!("Firmware validated: {} bytes", data.len());
 
     // In recovery mode, device is already in ROM download mode (BOOT + reset).
-    // Skip 1200bps touch — connect directly.
-    let port_name = connection::resolve_port(port)?;
-    println!("Using port: {} (recovery mode — device should be in bootloader)", port_name);
+    // Use default reset strategy — espflash will handle the connection.
+    // If the device is already in bootloader, it will connect directly.
+    println!("Connecting in recovery mode...");
+
+    let mut flasher = connection::connect_flasher(port, ResetBeforeOperation::default())?;
 
     println!(
         "Flashing {} bytes to app0 (offset 0x{:X})...",
         data.len(),
         APP0_OFFSET
     );
-    let _pb = progress::flash_progress(data.len() as u64, "Recovering");
 
-    // TODO: Integrate espflash library
-    // 1. Connect directly (no reset sequence)
-    // 2. Write firmware to APP0_OFFSET
-    // 3. Clear otadata to force boot from app0
-    // 4. Reset device
+    let mut progress = FlashProgress::new("Recovering");
+    flasher
+        .write_bin_to_flash(APP0_OFFSET, &data, &mut progress)
+        .context("Failed to write firmware")?;
 
-    println!("Recovery complete (stub - espflash integration pending)");
+    flasher
+        .connection()
+        .reset()
+        .context("Failed to reset device")?;
+
+    println!("\nRecovery complete. Device should be running firmware.");
     Ok(())
 }

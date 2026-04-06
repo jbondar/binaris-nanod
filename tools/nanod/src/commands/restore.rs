@@ -2,10 +2,11 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
+use espflash::connection::ResetBeforeOperation;
 
 use crate::device::connection;
 use crate::device::constants::*;
-use crate::util::progress;
+use crate::util::progress::FlashProgress;
 
 pub fn run(image: &Path, force: bool, port: Option<&str>) -> Result<()> {
     if !force {
@@ -27,19 +28,20 @@ pub fn run(image: &Path, force: bool, port: Option<&str>) -> Result<()> {
         println!("Proceeding anyway due to --force flag.");
     }
 
-    let port_name = connection::resolve_port(port)?;
-    println!("Using port: {}", port_name);
+    println!("Restoring {} bytes to flash...", data.len());
 
-    let sp = progress::spinner("Entering bootloader...");
-    connection::enter_bootloader(&port_name)?;
-    sp.finish_with_message("Bootloader ready");
+    let mut flasher = connection::connect_flasher(port, ResetBeforeOperation::default())?;
 
-    println!("Writing {} bytes to flash...", data.len());
-    let _pb = progress::flash_progress(data.len() as u64, "Restoring");
+    let mut progress = FlashProgress::new("Restoring");
+    flasher
+        .write_bin_to_flash(0, &data, &mut progress)
+        .context("Failed to write flash image")?;
 
-    // TODO: Integrate espflash library
-    // Write full image starting at offset 0
+    flasher
+        .connection()
+        .reset()
+        .context("Failed to reset device")?;
 
-    println!("Restore complete (stub - espflash integration pending)");
+    println!("\nRestore complete.");
     Ok(())
 }
