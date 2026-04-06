@@ -1,0 +1,19 @@
+[package]
+name = "nanod"
+version = "0.1.0"
+edition = "2021"
+description = "Flash and diagnostic tools for the NanoD/Ratchet_H1 haptic device"
+
+[dependencies]
+espflash = { version = "4.0.1", default-features = false }
+esp-idf-part = "0.5"
+serialport = "4.7"
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+sha2 = "0.10"
+hex = "0.4"
+ctrlc = "3.4"
