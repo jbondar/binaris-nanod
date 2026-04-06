@@ -1,15 +1,11 @@
-# Nano_D++ Integrations
+# Nano_D++ / Ratchet_H1 FW
 
-Welcome to the integrations repository! Here you will find software integrations and documentation for the [Nano_D++](https://store.binaris.io/products/nano_d-sensory-hid) haptic device.
+Hackable Open-Source Haptic Human Interface Device.
 
-## [📝 Nano_D++ Serial API Documentation](SERIAL_API.md)
+## Communications protocol
 
-This document describes the configuration and control protocol for the [Nano_D++](https://store.binaris.io/products/nano_d-sensory-hid).
+The Nano D++ and Ratchet devices use the same communication protocol. The details are described [here](communications.md).
 
-## [🎛️ ZERO/ONE Configuration Suite](https://github.com/katbinaris/zeroone)
+## Serial API Documentation
 
-This is the configuration suite for the Nano_D++ and future Binaris devices. It is a cross-platform application that allows you to configure and customize your device.
-
-## 👀 Keep your eyes peeled!
-
-More integrations and documentation will be added soon. If you have any questions or need help, please don't hesitate to [reach out to us](https://discord.gg/mVTvppcfp6)!
+See [SERIAL_API.md](SERIAL_API.md) for the configuration and control protocol.
