@@ -1,29 +1,35 @@
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use espflash::connection::ResetBeforeOperation;
 
 use crate::device::connection;
 use crate::device::constants::*;
-use crate::util::progress;
 
 pub fn run(output: &Path, port: Option<&str>) -> Result<()> {
-    let port_name = connection::resolve_port(port)?;
-    println!("Using port: {}", port_name);
+    println!("Backing up {} bytes from flash...", FLASH_SIZE);
 
-    let sp = progress::spinner("Entering bootloader...");
-    connection::enter_bootloader(&port_name)?;
-    sp.finish_with_message("Bootloader ready");
+    let mut flasher = connection::connect_flasher(port, ResetBeforeOperation::default())?;
 
-    println!("Reading {} bytes from flash...", FLASH_SIZE);
-    let _pb = progress::flash_progress(FLASH_SIZE as u64, "Reading");
+    let block_size = 0x1000_u32; // 4KB sectors
+    let max_in_flight = 64_u32;
 
-    // TODO: Integrate espflash library for flash readback
-    // espflash::flasher::Flasher::read_flash(0, FLASH_SIZE)
-    // then write result to output file
+    flasher
+        .read_flash(
+            0,
+            FLASH_SIZE,
+            block_size,
+            max_in_flight,
+            output.to_path_buf(),
+        )
+        .context("Failed to read flash")?;
 
-    println!(
-        "Backup saved to: {} (stub - espflash integration pending)",
-        output.display()
-    );
+    // Reset device after backup
+    flasher
+        .connection()
+        .reset()
+        .context("Failed to reset device")?;
+
+    println!("Backup saved to: {}", output.display());
     Ok(())
 }

@@ -11,7 +11,7 @@ use crate::device::constants::*;
 
 pub fn run(baud: Option<u32>, port: Option<&str>) -> Result<()> {
     let baud = baud.unwrap_or(MONITOR_BAUD);
-    let port_name = connection::resolve_port(port)?;
+    let (port_name, _usb_info) = connection::resolve_port(port)?;
 
     println!("Opening serial monitor on {} at {} baud", port_name, baud);
     println!("Press Ctrl+C to exit\n");
@@ -24,7 +24,9 @@ pub fn run(baud: Option<u32>, port: Option<&str>) -> Result<()> {
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
 
-    ctrlc_handler(r);
+    let _ = ctrlc::set_handler(move || {
+        r.store(false, Ordering::Relaxed);
+    });
 
     // Read thread: serial -> stdout
     let mut reader = serial.try_clone().context("Failed to clone serial port")?;
@@ -61,10 +63,4 @@ pub fn run(baud: Option<u32>, port: Option<&str>) -> Result<()> {
     let _ = read_handle.join();
     println!("\nMonitor closed.");
     Ok(())
-}
-
-fn ctrlc_handler(running: Arc<AtomicBool>) {
-    let _ = ctrlc::set_handler(move || {
-        running.store(false, Ordering::Relaxed);
-    });
 }

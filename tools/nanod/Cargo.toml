@@ -5,7 +5,7 @@ edition = "2021"
 description = "Flash and diagnostic tools for the NanoD/Ratchet_H1 haptic device"
 
 [dependencies]
-espflash = { version = "4.0.1", default-features = false }
+espflash = { version = "4.0.1", default-features = false, features = ["serialport"] }
 esp-idf-part = "0.5"
 serialport = "4.7"
 clap = { version = "4", features = ["derive"] }

@@ -1,20 +1,21 @@
-use std::thread;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use serialport::SerialPortType;
+use espflash::connection::{Connection, ResetAfterOperation, ResetBeforeOperation};
+use espflash::flasher::Flasher;
+use serialport::{SerialPortType, UsbPortInfo};
 
 use crate::device::constants::*;
 
 /// Find the NanoD serial port by VID/PID.
-pub fn find_nanod_port() -> Result<String> {
+pub fn find_nanod_port() -> Result<(String, UsbPortInfo)> {
     let ports = serialport::available_ports().context("Failed to enumerate serial ports")?;
 
     for port in &ports {
         if let SerialPortType::UsbPort(usb) = &port.port_type {
             if usb.vid == USB_VID && USB_PIDS.contains(&usb.pid) {
                 log::info!("Found NanoD on {}", port.port_name);
-                return Ok(port.port_name.clone());
+                return Ok((port.port_name.clone(), usb.clone()));
             }
         }
     }
@@ -30,46 +31,68 @@ pub fn find_nanod_port() -> Result<String> {
 }
 
 /// Resolve port: use user-specified port or auto-detect.
-pub fn resolve_port(port: Option<&str>) -> Result<String> {
+/// Returns the port name and USB port info.
+pub fn resolve_port(port: Option<&str>) -> Result<(String, UsbPortInfo)> {
     match port {
-        Some(p) => Ok(p.to_string()),
+        Some(p) => {
+            // User specified a port, look up its USB info
+            let ports =
+                serialport::available_ports().context("Failed to enumerate serial ports")?;
+            for pi in &ports {
+                if pi.port_name == p {
+                    if let SerialPortType::UsbPort(usb) = &pi.port_type {
+                        return Ok((p.to_string(), usb.clone()));
+                    }
+                }
+            }
+            // If not found as USB, create a dummy UsbPortInfo
+            Ok((
+                p.to_string(),
+                UsbPortInfo {
+                    vid: USB_VID,
+                    pid: USB_PIDS[0],
+                    serial_number: None,
+                    manufacturer: None,
+                    product: None,
+                },
+            ))
+        }
         None => find_nanod_port(),
     }
 }
 
-/// Enter bootloader via 1200bps touch (DTR toggle).
-/// The ESP32-S3 USB CDC resets into download mode when a 1200 baud
-/// connection opens and asserts DTR.
-pub fn enter_bootloader(port_name: &str) -> Result<()> {
-    log::info!("Entering bootloader via 1200bps touch on {}", port_name);
+/// Connect to the device and return a Flasher instance.
+/// This handles opening the serial port, creating the espflash Connection,
+/// and initializing the Flasher (which enters bootloader, loads stub, etc).
+pub fn connect_flasher(
+    port: Option<&str>,
+    reset_before: ResetBeforeOperation,
+) -> Result<Flasher> {
+    let (port_name, usb_info) = resolve_port(port)?;
+    println!("Using port: {}", port_name);
 
-    let mut port = serialport::new(port_name, 1200)
-        .timeout(Duration::from_secs(1))
-        .open()
-        .context("Failed to open port for bootloader entry")?;
+    let serial = serialport::new(&port_name, 115_200)
+        .timeout(Duration::from_secs(3))
+        .open_native()
+        .with_context(|| format!("Failed to open serial port: {}", port_name))?;
 
-    port.write_data_terminal_ready(true)
-        .context("Failed to assert DTR")?;
+    let connection = Connection::new(
+        serial,
+        usb_info,
+        ResetAfterOperation::HardReset,
+        reset_before,
+        115_200,
+    );
 
-    // Brief pause then close — the USB CDC will reset
-    thread::sleep(Duration::from_millis(250));
-    drop(port);
+    let flasher = Flasher::connect(
+        connection,
+        true,  // use_stub: faster flashing via RAM stub
+        true,  // verify: verify after write
+        true,  // skip: skip already-flashed regions
+        None,  // chip: auto-detect
+        Some(UPLOAD_BAUD), // baud: switch to fast baud after connect
+    )
+    .context("Failed to connect to device. Is it in bootloader mode?")?;
 
-    // Wait for device to re-enumerate
-    log::info!("Waiting for device to re-enumerate...");
-    thread::sleep(Duration::from_secs(2));
-
-    Ok(())
-}
-
-/// Wait for a serial port to appear (polling with timeout).
-pub fn wait_for_port(timeout: Duration) -> Result<String> {
-    let start = std::time::Instant::now();
-    while start.elapsed() < timeout {
-        if let Ok(port) = find_nanod_port() {
-            return Ok(port);
-        }
-        thread::sleep(Duration::from_millis(500));
-    }
-    bail!("Timed out waiting for device to appear")
+    Ok(flasher)
 }
