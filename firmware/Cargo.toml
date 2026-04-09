@@ -1,0 +1,17 @@
+[package]
+name = "nanod-firmware"
+version = "0.1.0"
+edition = "2021"
+description = "NanoD/Ratchet_H1 ESP32-S3 haptic device firmware"
+
+[dependencies]
+esp-idf-sys = { version = "0.37", features = ["binstart"] }
+esp-idf-hal = "0.46"
+esp-idf-svc = "0.52"
+heapless = "0.8"
+nanod-math = { path = "nanod-math" }
+log = "0.4"
+embedded-hal = "1.0"
+
+[build-dependencies]
+embuild = "0.33"

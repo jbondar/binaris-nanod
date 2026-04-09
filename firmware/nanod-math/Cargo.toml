@@ -1,0 +1,8 @@
+[package]
+name = "nanod-math"
+version = "0.1.0"
+edition = "2021"
+description = "Pure math modules for NanoD haptic firmware (PID, FOC, haptic state)"
+
+[dependencies]
+heapless = "0.8"

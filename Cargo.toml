@@ -1,0 +1,6 @@
+[workspace]
+members = ["tools/nanod", "firmware/nanod-math"]
+exclude = ["firmware"]
+# firmware is excluded from workspace because it targets xtensa-esp32s3-espidf
+# and cannot share a target dir with host tools.
+# Build it separately: cd firmware && cargo build
