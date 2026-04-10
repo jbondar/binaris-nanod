@@ -2,10 +2,10 @@
 
 C++ (Arduino/PlatformIO) → Rust (esp-idf-hal) for ESP32-S3
 
-## What's Done — Phase 1: Motor Control
+## What's Done — Phases 1-3A
 
-All motor + haptic core logic is ported and compiling for `xtensa-esp32s3-espidf`.
-Pure math extracted into `nanod-math` crate with **46 host-side tests passing**.
+All motor/haptic core, COM serial protocol, profile management, and HMI (buttons + LEDs) are ported and compiling for `xtensa-esp32s3-espidf`.
+Pure math extracted into `nanod-math` crate with **115 host-side tests passing**.
 
 | Module | Rust Location | Tests |
 |--------|--------------|-------|
@@ -19,8 +19,22 @@ Pure math extracted into `nanod-math` crate with **46 host-side tests passing**.
 | GPIO pin map | `firmware/src/pins.rs` | — |
 | FOC thread (Core 1, FreeRTOS) | `firmware/src/thread/foc_thread.rs` | — |
 | Entry point | `firmware/src/main.rs` | — |
+| JSON protocol (command/event types) | `nanod-math/src/protocol/command.rs` | 12 |
+| Protocol parsing | `nanod-math/src/protocol/parse.rs` | 12 |
+| Protocol serialization | `nanod-math/src/protocol/serialize.rs` | 7 |
+| Profile manager (dirty tracking) | `nanod-math/src/profile/manager.rs` | 12 |
+| COM thread (Core 0, JSON serial) | `firmware/src/com/com_thread.rs` | — |
+| Command dispatcher | `firmware/src/com/dispatch.rs` | — |
+| LED rendering (ring halves pointer) | `nanod-math/src/led/ring.rs` | 13 |
+| LED rendering (button LEDs) | `nanod-math/src/led/button_leds.rs` | 5 |
+| LED types (Rgb, LedConfig) | `nanod-math/src/led/types.rs` | 7 |
+| Button debounce state machine | `nanod-math/src/hmi/button.rs` | 12 |
+| RMT WS2811 LED driver (2 strips) | `firmware/src/hmi/leds.rs` | — |
+| GPIO button polling (4 buttons) | `firmware/src/hmi/buttons.rs` | — |
+| HMI thread (Core 0, buttons + LEDs) | `firmware/src/hmi/hmi_thread.rs` | — |
+| Inter-thread channels (mpsc) | `firmware/src/ipc.rs` | — |
 
-### C++ files fully replaced by Phase 1
+### C++ files fully replaced by Phases 1-3A
 
 | C++ File | Status |
 |----------|--------|
@@ -30,34 +44,32 @@ Pure math extracted into `nanod-math` crate with **46 host-side tests passing**.
 | `include/nanofoc_d.h` | Replaced by `pins.rs` |
 | `src/foc_thread.h` / `src/foc_thread.cpp` | Replaced by `thread/foc_thread.rs` |
 | `src/thread_crtp.h` | Direct `xTaskCreatePinnedToCore` call |
+| `src/com_thread.h` / `src/com_thread.cpp` | Replaced by `com/com_thread.rs` + `com/dispatch.rs` |
+| `src/HapticProfileManager.h/cpp` | Replaced by `nanod-math/profile/manager.rs` |
+| `src/DeviceSettings.h/cpp` | Partially replaced by `protocol/command.rs` SettingsPayload |
+| `src/led_api.h` | Replaced by `nanod-math/led/types.rs` |
+| `src/hmi_thread.h/cpp` (buttons + LEDs) | Replaced by `hmi/hmi_thread.rs` + `hmi/buttons.rs` + `hmi/leds.rs` |
+| `src/hmi_api.h` (button config) | Partially replaced by `nanod-math/hmi/button.rs` |
 
 ---
 
 ## What's Left — By Phase
 
-### Phase 2: COM Thread + Serial Protocol
-Serial JSON command protocol, profile loading from SPIFFS.
+### Phase 2: COM Thread + Serial Protocol — DONE
+Completed: JSON serial protocol, profile manager, SPIFFS persistence, command dispatcher.
+
+### Phase 3A: HMI (Buttons + LEDs) — DONE
+Completed: GPIO button polling with debounce, RMT WS2811 LED driver (60-LED ring + 8 button LEDs), LED rendering math, HMI thread on Core 0, inter-thread channels (std::sync::mpsc).
+
+### Phase 3B: USB HID/MIDI — NOT STARTED
+USB HID (keyboard, mouse, gamepad) and MIDI output. Requires reconfiguring TinyUSB as composite device (CDC+HID+MIDI).
 
 | C++ File | What It Does |
 |----------|-------------|
-| `src/com_thread.h/cpp` | JSON serial protocol, dispatches config to other threads |
-| `src/HapticCommander.h/cpp` | SimpleFOC register-based motor commands |
-| `src/HapticProfileManager.h/cpp` | Load/save haptic profiles to SPIFFS as JSON |
-| `src/HapticProfileUpdater.cpp` | Profile schema migration (v1 → v2) |
-| `src/DeviceSettings.h/cpp` | Device settings persistence (Preferences + SPIFFS) |
+| `src/hmi_thread.h/cpp` (USB parts) | USB HID report sending, MIDI CC, gamepad, knob value mapping |
+| `src/hmi_api.h` (HID/MIDI parts) | Key action types (MIDI CC, HID keys, mouse, gamepad, profile change) |
 
-**Deps needed**: `serde_json` or `embedded-json`, SPIFFS via esp-idf-svc
-
-### Phase 3: HMI Thread (Buttons, LEDs, USB HID/MIDI)
-Input handling, LED effects, USB device output.
-
-| C++ File | What It Does |
-|----------|-------------|
-| `src/hmi_thread.h/cpp` | Buttons (AceButton×4), LEDs (FastLED 60+8), USB HID/MIDI/gamepad |
-| `src/hmi_api.h` | Key mapping, knob mapping, HID/MIDI config structs |
-| `src/led_api.h` | LED color/mode config |
-
-**Deps needed**: GPIO input with debounce, WS2811 driver, TinyUSB FFI for HID/MIDI
+**Deps needed**: TinyUSB FFI composite device setup, HID descriptor tables
 
 ### Phase 4: LCD Thread (LVGL Display)
 Circular GC9A01 display with LVGL UI.
@@ -109,11 +121,12 @@ Haptic feedback audio via I2S DAC.
 | Category | Files | Ported | % |
 |----------|-------|--------|---|
 | Motor/Haptic core | 8 | 8 | **100%** |
-| Threading | 8 | 2 | 25% |
-| Settings/Profiles | 5 | 0 | 0% |
-| HMI/Input | 4 | 0 | 0% |
+| Threading | 8 | 6 | **75%** |
+| Settings/Profiles | 5 | 4 | **80%** |
+| HMI/Input (buttons, LEDs) | 4 | 3 | **75%** |
+| USB HID/MIDI | 2 | 0 | 0% |
 | Display/UI | 15 | 0 | 0% |
 | Audio | 8 | 0 | 0% |
-| **Total** | **48** | **10** | **~21%** |
+| **Total** | **50** | **21** | **~42%** |
 
-The hardest part (real-time motor control math) is done. The remaining work is mostly peripheral I/O and UI — higher-level, less timing-critical code.
+Motor control, serial protocol, profile management, buttons, and LEDs are all ported. Remaining: USB HID/MIDI (Phase 3B), LCD/LVGL (Phase 4), audio/I2S (Phase 5).

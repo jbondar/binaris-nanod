@@ -79,6 +79,7 @@ mod tests {
         let profile = ProfilePayload {
             name: "test".into(),
             haptic: None,
+            led: None,
         };
         let json = serialize_event(&profile_response(profile)).unwrap();
         assert!(json.contains("\"name\":\"test\""));

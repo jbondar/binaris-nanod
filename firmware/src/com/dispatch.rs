@@ -1,7 +1,8 @@
 use nanod_math::haptic::profile::DetentProfile;
+use nanod_math::led::types::LedConfig;
 use nanod_math::profile::manager::ProfileManager;
 use nanod_math::protocol::command::*;
-use nanod_math::protocol::parse::{self, ParseError};
+use nanod_math::protocol::parse;
 use nanod_math::protocol::serialize;
 
 /// Handles parsed commands and produces responses.
@@ -17,6 +18,10 @@ pub enum Action {
     Respond(String),
     /// Update the FOC thread's haptic profile.
     UpdateHaptic(DetentProfile),
+    /// Update HMI thread's LED configuration.
+    UpdateLedConfig(LedConfig),
+    /// Update HMI thread's settings (brightness, orientation).
+    UpdateSettings { brightness: u8, orientation: u8 },
     /// Trigger motor recalibration.
     Recalibrate,
     /// Persist profiles/settings to SPIFFS.
@@ -53,19 +58,24 @@ impl Dispatcher {
     fn handle_command(&mut self, cmd: Command, actions: &mut Vec<Action>) {
         match cmd {
             Command::SetProfile(payload) => {
-                // Extract haptic config before storing
+                // Extract configs before storing
                 let haptic = payload.haptic.as_ref().map(|h| h.to_detent_profile());
+                let led = payload.led.clone();
 
                 let name = payload.name.clone();
                 match self.profiles.set_profile(payload) {
                     Ok(_) => {
                         let _ = self.profiles.set_active(&name);
-                        let evt = serialize::message_event("info", &format!("profile '{name}' set"));
+                        let evt =
+                            serialize::message_event("info", &format!("profile '{name}' set"));
                         if let Ok(json) = serialize::serialize_event(&evt) {
                             actions.push(Action::Respond(json));
                         }
                         if let Some(profile) = haptic {
                             actions.push(Action::UpdateHaptic(profile));
+                        }
+                        if let Some(led_config) = led {
+                            actions.push(Action::UpdateLedConfig(led_config));
                         }
                     }
                     Err(e) => {
@@ -94,6 +104,13 @@ impl Dispatcher {
                 if let Ok(json) = serialize::serialize_event(&evt) {
                     actions.push(Action::Respond(json));
                 }
+                // Forward brightness/orientation to HMI thread
+                let brightness = self.settings.led_brightness.unwrap_or(200);
+                let orientation = self.settings.orientation.unwrap_or(0);
+                actions.push(Action::UpdateSettings {
+                    brightness,
+                    orientation,
+                });
             }
 
             Command::Motor(m) => {
@@ -131,9 +148,11 @@ impl Dispatcher {
                         if let Ok(json) = serialize::serialize_event(&evt) {
                             actions.push(Action::Respond(json));
                         }
-                        // Also update haptic if it has config
                         if let Some(h) = &p.haptic {
                             actions.push(Action::UpdateHaptic(h.to_detent_profile()));
+                        }
+                        if let Some(l) = &p.led {
+                            actions.push(Action::UpdateLedConfig(l.clone()));
                         }
                     }
                 } else {

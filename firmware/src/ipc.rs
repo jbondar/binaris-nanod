@@ -1,0 +1,67 @@
+//! Inter-thread communication channels.
+//!
+//! Each thread receives a context struct with its channel endpoints.
+//! Channels are created in main() and distributed to thread spawn functions.
+//! Endpoints are passed through `xTaskCreatePinnedToCore`'s `*mut c_void`
+//! via `Box::into_raw` / `Box::from_raw`.
+
+use std::sync::mpsc::{Receiver, SyncSender};
+
+use nanod_math::haptic::profile::DetentProfile;
+use nanod_math::led::types::LedConfig;
+use nanod_math::protocol::command::KeyEvent;
+
+/// Snapshot of motor angle data, published by FOC thread.
+pub struct AngleSnapshot {
+    /// Continuous shaft angle in radians (multi-turn).
+    pub shaft_angle: f32,
+    /// Current haptic position (0..end_pos).
+    pub current_pos: u16,
+}
+
+/// Commands sent from COM thread to HMI thread.
+pub enum HmiCommand {
+    /// Update LED configuration from a profile.
+    UpdateLedConfig(LedConfig),
+    /// Update device settings relevant to HMI (brightness, orientation).
+    UpdateSettings {
+        brightness: u8,
+        orientation: u8,
+    },
+}
+
+/// Commands sent from COM thread to FOC thread.
+pub enum FocCommand {
+    /// Update the haptic detent profile.
+    UpdateHaptic(DetentProfile),
+    /// Trigger motor recalibration.
+    Recalibrate,
+}
+
+/// Channel endpoints for the FOC thread.
+pub struct FocContext {
+    /// Receive haptic profile updates and recalibrate commands from COM.
+    pub cmd_rx: Receiver<FocCommand>,
+    /// Publish angle snapshots to HMI.
+    pub angle_tx: SyncSender<AngleSnapshot>,
+}
+
+/// Channel endpoints for the COM thread.
+pub struct ComContext {
+    /// Send haptic/motor commands to FOC.
+    pub foc_tx: SyncSender<FocCommand>,
+    /// Send LED/settings updates to HMI.
+    pub hmi_tx: SyncSender<HmiCommand>,
+    /// Receive key events from HMI for serial output.
+    pub key_rx: Receiver<KeyEvent>,
+}
+
+/// Channel endpoints for the HMI thread.
+pub struct HmiContext {
+    /// Receive angle snapshots from FOC.
+    pub angle_rx: Receiver<AngleSnapshot>,
+    /// Receive config updates from COM.
+    pub cmd_rx: Receiver<HmiCommand>,
+    /// Send key events to COM for serial output.
+    pub key_tx: SyncSender<KeyEvent>,
+}

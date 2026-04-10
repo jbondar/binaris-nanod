@@ -6,6 +6,7 @@ use esp_idf_sys::*;
 
 use crate::haptic::profile::Direction;
 use crate::haptic::state::HapticController;
+use crate::ipc::{AngleSnapshot, FocCommand, FocContext};
 use crate::motor::calibration;
 use crate::motor::driver::ThreePhaseDriver;
 use crate::motor::encoder::Mt6701Encoder;
@@ -17,15 +18,19 @@ const FOC_PRIORITY: u32 = 1;
 const FOC_CORE: i32 = 1;
 const PWM_FREQUENCY_HZ: u32 = 25_000;
 
+/// How often to publish angle snapshots (microseconds).
+const ANGLE_PUBLISH_INTERVAL_US: u64 = 10_000; // 10ms
+
 /// Spawn the FOC control thread pinned to Core 1.
-pub fn spawn_foc_thread() {
+pub fn spawn_foc_thread(ctx: FocContext) {
+    let ctx_ptr = Box::into_raw(Box::new(ctx)) as *mut core::ffi::c_void;
     unsafe {
         let mut handle: TaskHandle_t = core::ptr::null_mut();
         xTaskCreatePinnedToCore(
             Some(foc_task),
             b"foc\0".as_ptr() as *const _,
             FOC_STACK_SIZE as u32,
-            core::ptr::null_mut(),
+            ctx_ptr,
             FOC_PRIORITY,
             &mut handle,
             FOC_CORE,
@@ -33,8 +38,9 @@ pub fn spawn_foc_thread() {
     }
 }
 
-unsafe extern "C" fn foc_task(_arg: *mut core::ffi::c_void) {
-    if let Err(e) = foc_task_inner() {
+unsafe extern "C" fn foc_task(arg: *mut core::ffi::c_void) {
+    let ctx = unsafe { *Box::from_raw(arg as *mut FocContext) };
+    if let Err(e) = foc_task_inner(ctx) {
         log::error!("FOC task failed: {:?}", e);
     }
     loop {
@@ -42,7 +48,7 @@ unsafe extern "C" fn foc_task(_arg: *mut core::ffi::c_void) {
     }
 }
 
-fn foc_task_inner() -> Result<(), EspError> {
+fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
     log::info!("FOC thread starting");
 
     let peripherals = unsafe { Peripherals::steal() };
@@ -102,9 +108,29 @@ fn foc_task_inner() -> Result<(), EspError> {
 
     log::info!("FOC thread initialized, entering control loop");
 
+    let mut last_publish_us: u64 = 0;
+
     // --- Main control loop ---
     loop {
         let now_us = unsafe { esp_timer_get_time() } as u64;
+
+        // Check for incoming commands (non-blocking)
+        if let Ok(cmd) = ctx.cmd_rx.try_recv() {
+            match cmd {
+                FocCommand::UpdateHaptic(profile) => {
+                    log::info!(
+                        "FOC: haptic update — {} detents, {:?} mode",
+                        profile.detent_count,
+                        profile.mode
+                    );
+                    haptic.state.load_profile(profile, None);
+                }
+                FocCommand::Recalibrate => {
+                    log::info!("FOC: recalibration requested");
+                    // TODO: run calibration routine, store to NVS
+                }
+            }
+        }
 
         let angle = encoder.read_angle()?;
         foc.update_sensor(angle, now_us);
@@ -130,6 +156,15 @@ fn foc_task_inner() -> Result<(), EspError> {
                     break;
                 }
             }
+        }
+
+        // Publish angle snapshot to HMI (throttled)
+        if now_us.wrapping_sub(last_publish_us) >= ANGLE_PUBLISH_INTERVAL_US {
+            last_publish_us = now_us;
+            let _ = ctx.angle_tx.try_send(AngleSnapshot {
+                shaft_angle: foc.shaft_angle,
+                current_pos: haptic.state.current_pos as u16,
+            });
         }
     }
 }

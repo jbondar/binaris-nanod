@@ -158,6 +158,7 @@ mod tests {
         ProfilePayload {
             name: name.into(),
             haptic: None,
+            led: None,
         }
     }
 
@@ -277,6 +278,7 @@ mod tests {
                 output_ramp: 5000.0,
                 detent_strength: 3.0,
             }),
+            led: None,
         };
         let json = serde_json::to_string(&profile).unwrap();
         let parsed: ProfilePayload = serde_json::from_str(&json).unwrap();

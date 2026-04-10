@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::haptic::profile::{DetentProfile, HapticMode};
+use crate::led::types::LedConfig;
 
 /// Inbound command from host → device.
 #[derive(Debug, Clone, PartialEq)]
@@ -86,15 +87,16 @@ impl HapticConfig {
     }
 }
 
-/// Full profile payload (name + haptic config; HMI/LED/audio added in later phases).
+/// Full profile payload (name + haptic config + LED config; HMI/audio added in later phases).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfilePayload {
     pub name: String,
     #[serde(default)]
     pub haptic: Option<HapticConfig>,
+    #[serde(default)]
+    pub led: Option<LedConfig>,
     // Future phases:
     // pub hmi: Option<HmiConfig>,
-    // pub led: Option<LedConfig>,
     // pub audio: Option<AudioConfig>,
 }
 

@@ -1,8 +1,10 @@
 use std::io::{BufRead, BufReader, Write};
 
 use esp_idf_sys::*;
+use nanod_math::protocol::serialize;
 
 use super::dispatch::{Action, Dispatcher};
+use crate::ipc::ComContext;
 
 const COM_STACK_SIZE: usize = 8192;
 const COM_PRIORITY: u32 = 1;
@@ -10,14 +12,15 @@ const COM_CORE: i32 = 0;
 const LOOP_DELAY_MS: u32 = 10; // 100Hz
 
 /// Spawn the COM thread on Core 0.
-pub fn spawn_com_thread() {
+pub fn spawn_com_thread(ctx: ComContext) {
+    let ctx_ptr = Box::into_raw(Box::new(ctx)) as *mut core::ffi::c_void;
     unsafe {
         let mut handle: TaskHandle_t = core::ptr::null_mut();
         xTaskCreatePinnedToCore(
             Some(com_task),
             b"com\0".as_ptr() as *const _,
             COM_STACK_SIZE as u32,
-            core::ptr::null_mut(),
+            ctx_ptr,
             COM_PRIORITY,
             &mut handle,
             COM_CORE,
@@ -25,8 +28,9 @@ pub fn spawn_com_thread() {
     }
 }
 
-unsafe extern "C" fn com_task(_arg: *mut core::ffi::c_void) {
-    if let Err(e) = com_task_inner() {
+unsafe extern "C" fn com_task(arg: *mut core::ffi::c_void) {
+    let ctx = unsafe { *Box::from_raw(arg as *mut ComContext) };
+    if let Err(e) = com_task_inner(ctx) {
         log::error!("COM task failed: {:?}", e);
     }
     loop {
@@ -34,7 +38,7 @@ unsafe extern "C" fn com_task(_arg: *mut core::ffi::c_void) {
     }
 }
 
-fn com_task_inner() -> Result<(), Box<dyn std::error::Error>> {
+fn com_task_inner(ctx: ComContext) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("COM thread starting");
 
     let mut dispatcher = Dispatcher::new();
@@ -56,7 +60,6 @@ fn com_task_inner() -> Result<(), Box<dyn std::error::Error>> {
             Ok(0) => {
                 // No data / EOF — sleep and retry
                 unsafe { vTaskDelay(LOOP_DELAY_MS) };
-                continue;
             }
             Ok(_) => {
                 let line = line_buf.trim();
@@ -71,19 +74,38 @@ fn com_task_inner() -> Result<(), Box<dyn std::error::Error>> {
                     match action {
                         Action::Respond(json) => {
                             let _ = stdout.write_all(json.as_bytes());
+                            let _ = stdout.write_all(b"\n");
                             let _ = stdout.flush();
                         }
                         Action::UpdateHaptic(profile) => {
-                            // TODO: send to FOC thread via queue
                             log::info!(
-                                "haptic update: {} detents, {:?} mode",
+                                "COM→FOC: haptic update — {} detents, {:?} mode",
                                 profile.detent_count,
                                 profile.mode
                             );
+                            let _ = ctx
+                                .foc_tx
+                                .try_send(crate::ipc::FocCommand::UpdateHaptic(profile));
+                        }
+                        Action::UpdateLedConfig(led_config) => {
+                            log::info!("COM→HMI: LED config update");
+                            let _ = ctx
+                                .hmi_tx
+                                .try_send(crate::ipc::HmiCommand::UpdateLedConfig(led_config));
+                        }
+                        Action::UpdateSettings {
+                            brightness,
+                            orientation,
+                        } => {
+                            log::info!("COM→HMI: settings update");
+                            let _ = ctx.hmi_tx.try_send(crate::ipc::HmiCommand::UpdateSettings {
+                                brightness,
+                                orientation,
+                            });
                         }
                         Action::Recalibrate => {
-                            // TODO: send recalibrate command to FOC thread
-                            log::info!("motor recalibration requested");
+                            log::info!("COM→FOC: recalibrate");
+                            let _ = ctx.foc_tx.try_send(crate::ipc::FocCommand::Recalibrate);
                         }
                         Action::Save => {
                             save_profiles_to_spiffs(&dispatcher);
@@ -95,6 +117,18 @@ fn com_task_inner() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => {
                 log::warn!("COM read error: {e}");
                 unsafe { vTaskDelay(LOOP_DELAY_MS) };
+            }
+        }
+
+        // Forward key events from HMI to serial output
+        while let Ok(key_event) = ctx.key_rx.try_recv() {
+            if let Ok(json) = serialize::serialize_event(&serialize::key_event(
+                key_event.key.num,
+                &key_event.key.state,
+            )) {
+                let _ = stdout.write_all(json.as_bytes());
+                let _ = stdout.write_all(b"\n");
+                let _ = stdout.flush();
             }
         }
     }
