@@ -11,6 +11,7 @@ esp-idf-svc = "0.52"
 heapless = "0.8"
 nanod-math = { path = "nanod-math" }
 log = "0.4"
+serde_json = "1"
 embedded-hal = "1.0"
 
 [build-dependencies]

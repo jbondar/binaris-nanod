@@ -63,4 +63,15 @@ pub enum Commands {
         #[arg(short, long)]
         baud: Option<u32>,
     },
+
+    /// Run hardware test suites over serial
+    Test {
+        /// Test suite to run (motor, haptic, serial, buttons, leds, display, audio, all)
+        #[arg(default_value = "all")]
+        suite: String,
+
+        /// Baud rate (default: 115200)
+        #[arg(short, long)]
+        baud: Option<u32>,
+    },
 }

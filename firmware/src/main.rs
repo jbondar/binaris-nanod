@@ -1,3 +1,4 @@
+mod com;
 mod haptic;
 mod motor;
 mod pins;
@@ -15,9 +16,12 @@ fn main() {
     // Spawn FOC control thread on Core 1
     thread::foc_thread::spawn_foc_thread();
 
-    log::info!("FOC thread spawned, main thread idle");
+    // Spawn COM thread on Core 0
+    com::com_thread::spawn_com_thread();
 
-    // Main thread: placeholder for future COM thread (serial protocol, etc.)
+    log::info!("All threads spawned");
+
+    // Main thread idle — work happens in FOC and COM threads
     loop {
         unsafe {
             esp_idf_sys::vTaskDelay(1000);

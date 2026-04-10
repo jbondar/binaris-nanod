@@ -937,6 +937,17 @@ dependencies = [
  "esp-idf-sys",
  "heapless 0.8.0",
  "log",
+ "nanod-math",
+ "serde_json",
+]
+
+[[package]]
+name = "nanod-math"
+version = "0.1.0"
+dependencies = [
+ "heapless 0.8.0",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
