@@ -267,4 +267,66 @@ mod tests {
         // Zero torque → near-center duty
         assert!((duty.a - 0.5).abs() < 0.1);
     }
+
+    #[test]
+    fn test_svpwm_sector_boundaries_in_range() {
+        // Test at exact sector boundary angles: 0, 60, 120, 180, 240, 300
+        for deg in [0, 60, 120, 180, 240, 300] {
+            let angle = (deg as f32).to_radians();
+            let duty = set_phase_voltage(2.0, 0.0, angle, 5.0);
+            assert!(
+                duty.a >= 0.0 && duty.a <= 1.0
+                    && duty.b >= 0.0 && duty.b <= 1.0
+                    && duty.c >= 0.0 && duty.c <= 1.0,
+                "duties out of range at sector boundary {deg}deg: a={} b={} c={}",
+                duty.a, duty.b, duty.c
+            );
+        }
+    }
+
+    #[test]
+    fn test_svpwm_continuity_across_sectors() {
+        // Duty cycles should not jump wildly between adjacent angles
+        let step = 0.1_f32.to_radians();
+        let mut prev = set_phase_voltage(2.0, 0.0, 0.0, 5.0);
+        let mut angle = step;
+        while angle < TWO_PI {
+            let cur = set_phase_voltage(2.0, 0.0, angle, 5.0);
+            let da = (cur.a - prev.a).abs();
+            let db = (cur.b - prev.b).abs();
+            let dc = (cur.c - prev.c).abs();
+            assert!(
+                da < 0.15 && db < 0.15 && dc < 0.15,
+                "discontinuity at {:.1}deg: da={da:.3} db={db:.3} dc={dc:.3}",
+                angle.to_degrees()
+            );
+            prev = cur;
+            angle += step;
+        }
+    }
+
+    #[test]
+    fn test_svpwm_saturation_clamped() {
+        // Uq > voltage_limit should be clamped
+        let duty = set_phase_voltage(100.0, 0.0, 1.0, 5.0);
+        assert!(
+            duty.a >= 0.0 && duty.a <= 1.0
+                && duty.b >= 0.0 && duty.b <= 1.0
+                && duty.c >= 0.0 && duty.c <= 1.0,
+            "saturated voltage should still produce valid duties"
+        );
+    }
+
+    #[test]
+    fn test_torque_clamped_to_voltage_limit() {
+        let foc = FocState::new(MotorConfig::default());
+        // Large torque command — should be clamped by voltage_limit
+        let duty = foc.compute_torque(100.0);
+        assert!(
+            duty.a >= 0.0 && duty.a <= 1.0
+                && duty.b >= 0.0 && duty.b <= 1.0
+                && duty.c >= 0.0 && duty.c <= 1.0,
+            "large torque should produce valid clamped duties"
+        );
+    }
 }

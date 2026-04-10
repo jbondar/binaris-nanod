@@ -140,4 +140,62 @@ mod tests {
         let out = pid.call(-5.0, 1000);
         assert!((out + 10.0).abs() < 0.01, "P=2 * error=-5 should be -10, got {out}");
     }
+
+    #[test]
+    fn test_integral_accumulates_over_time() {
+        // P=0, I=10, D=0 — output should grow with sustained error
+        let mut pid = PidController::new(0.0, 10.0, 0.0, 1000.0, 0.0);
+        let mut out = 0.0;
+        for i in 0..100u64 {
+            out = pid.call(1.0, i * 1000); // 1ms steps, constant error=1
+        }
+        // Integral should accumulate: ~10 * 0.001 * 100 * 1.0 = ~1.0
+        assert!(out > 0.5, "integral should accumulate, got {out}");
+    }
+
+    #[test]
+    fn test_integral_clamped_to_limit() {
+        let mut pid = PidController::new(0.0, 1000.0, 0.0, 5.0, 0.0);
+        for i in 0..1000u64 {
+            pid.call(100.0, i * 1000);
+        }
+        let out = pid.call(100.0, 1_000_000);
+        assert!(
+            out.abs() <= 5.01,
+            "integral should be clamped to limit=5, got {out}"
+        );
+    }
+
+    #[test]
+    fn test_integral_recovers_on_error_reversal() {
+        let mut pid = PidController::new(0.0, 10.0, 0.0, 100.0, 0.0);
+        // Wind up positive
+        for i in 0..50u64 {
+            pid.call(1.0, i * 1000);
+        }
+        let pos_out = pid.call(1.0, 50_000);
+        // Reverse error
+        for i in 51..150u64 {
+            pid.call(-1.0, i * 1000);
+        }
+        let neg_out = pid.call(-1.0, 150_000);
+        assert!(
+            neg_out < pos_out,
+            "integral should recover after error reversal: pos={pos_out}, neg={neg_out}"
+        );
+    }
+
+    #[test]
+    fn test_reset_clears_state() {
+        let mut pid = PidController::new(5.0, 1.0, 0.5, 100.0, 0.0);
+        for i in 0..50u64 {
+            pid.call(10.0, i * 1000);
+        }
+        pid.reset();
+        let out = pid.call(0.0, 100_000);
+        assert!(
+            out.abs() < 0.01,
+            "after reset, zero error should give zero output, got {out}"
+        );
+    }
 }

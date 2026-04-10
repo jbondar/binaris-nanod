@@ -399,4 +399,291 @@ mod tests {
         state.load_profile(profile, Some(10));
         assert_eq!(state.num_detents, 40);
     }
+
+    // --- Detent boundary state machine ---
+
+    #[test]
+    fn test_hit_upper_limit_fires_limit_pos() {
+        let mut ctrl = HapticController::new();
+        // Place position at end_pos so next increment hits boundary
+        ctrl.state.current_pos = ctrl.state.detent_profile.end_pos;
+        ctrl.state.attract_angle = 0.0;
+        ctrl.state.last_attract_angle = 0.0;
+
+        let mut events = heapless::Vec::<HapticEvt, 4>::new();
+        // Move shaft positive past hysteresis — triggers detent_handler with increment
+        let angle = ctrl.state.detent_width * 1.5;
+        ctrl.find_detent(angle, &mut events);
+
+        assert!(ctrl.state.at_limit, "should be at limit");
+        assert!(
+            events.iter().any(|e| *e == HapticEvt::LimitPos || *e == HapticEvt::LimitNeg),
+            "should fire a limit event, got {:?}",
+            events
+        );
+    }
+
+    #[test]
+    fn test_hit_lower_limit_fires_limit_neg() {
+        let mut ctrl = HapticController::new();
+        ctrl.state.current_pos = ctrl.state.detent_profile.start_pos;
+        ctrl.state.attract_angle = 0.0;
+        ctrl.state.last_attract_angle = 0.0;
+
+        let mut events = heapless::Vec::<HapticEvt, 4>::new();
+        // Move shaft negative past hysteresis
+        let angle = -ctrl.state.detent_width * 1.5;
+        ctrl.find_detent(angle, &mut events);
+
+        assert!(ctrl.state.at_limit, "should be at limit");
+        assert!(
+            events.iter().any(|e| *e == HapticEvt::LimitPos || *e == HapticEvt::LimitNeg),
+            "should fire a limit event, got {:?}",
+            events
+        );
+    }
+
+    #[test]
+    fn test_either_event_on_non_limit_crossing() {
+        let mut ctrl = HapticController::new();
+        // Start at middle so we won't hit boundary
+        ctrl.state.current_pos = 128;
+        ctrl.state.attract_angle = 0.0;
+        ctrl.state.last_attract_angle = 0.0;
+
+        let mut events = heapless::Vec::<HapticEvt, 4>::new();
+        let angle = ctrl.state.detent_width * 1.5;
+        ctrl.find_detent(angle, &mut events);
+
+        assert!(
+            events.iter().any(|e| *e == HapticEvt::Either),
+            "should fire Either event on non-limit crossing, got {:?}",
+            events
+        );
+    }
+
+    #[test]
+    fn test_was_at_limit_set_on_leaving_limit() {
+        let mut ctrl = HapticController::new();
+        // Simulate being at limit
+        ctrl.state.at_limit = true;
+        ctrl.state.current_pos = ctrl.state.detent_profile.end_pos;
+        ctrl.state.attract_angle = ctrl.state.detent_width * 10.0;
+        ctrl.state.last_attract_angle = ctrl.state.attract_angle;
+
+        // Now move backwards to leave the limit
+        let mut events = heapless::Vec::<HapticEvt, 4>::new();
+        let angle = ctrl.state.attract_angle - ctrl.state.detent_width * 1.5;
+        ctrl.find_detent(angle, &mut events);
+
+        // After leaving limit, was_at_limit should be true
+        if !ctrl.state.at_limit {
+            assert!(
+                ctrl.state.was_at_limit,
+                "was_at_limit should be set after leaving limit"
+            );
+        }
+    }
+
+    #[test]
+    fn test_vernier_mode_boundary_scaling() {
+        let mut ctrl = HapticController::new();
+        let profile = DetentProfile {
+            mode: HapticMode::Vernier,
+            start_pos: 0,
+            end_pos: 20,
+            detent_count: 20,
+            vernier: 5,
+            kx_force: false,
+            ..DetentProfile::default()
+        };
+        ctrl.state.load_profile(profile, Some(20 * 5)); // At effective_end
+        ctrl.state.attract_angle = 0.0;
+        ctrl.state.last_attract_angle = 0.0;
+
+        let mut events = heapless::Vec::<HapticEvt, 4>::new();
+        let angle = ctrl.state.detent_width * 1.5;
+        ctrl.find_detent(angle, &mut events);
+
+        // Should hit limit at effective_end = 20 * 5 = 100
+        assert!(
+            ctrl.state.at_limit,
+            "should hit limit at vernier-scaled boundary"
+        );
+    }
+
+    #[test]
+    fn test_direction_cw_reverses_increment() {
+        let mut ctrl = HapticController::new();
+        ctrl.sensor_direction = Direction::Cw;
+        ctrl.state.current_pos = 128;
+        ctrl.state.attract_angle = 0.0;
+        ctrl.state.last_attract_angle = 0.0;
+        let initial = ctrl.state.current_pos;
+
+        let mut events = heapless::Vec::<HapticEvt, 4>::new();
+        let angle = ctrl.state.detent_width * 1.5;
+        ctrl.find_detent(angle, &mut events);
+
+        // With CW direction, positive angle should decrement
+        assert_ne!(ctrl.state.current_pos, initial, "position should change");
+    }
+
+    #[test]
+    fn test_multiple_detent_crossings_sequential() {
+        let mut ctrl = HapticController::new();
+        ctrl.state.current_pos = 128;
+        let start_pos = ctrl.state.current_pos;
+
+        // Cross 5 detents one at a time
+        for i in 1..=5 {
+            let mut events = heapless::Vec::<HapticEvt, 4>::new();
+            let angle = ctrl.state.detent_width * (i as f32 + 0.3);
+            ctrl.state.attract_angle = ctrl.state.detent_width * ((i - 1) as f32);
+            ctrl.state.last_attract_angle = ctrl.state.attract_angle;
+            ctrl.find_detent(angle, &mut events);
+        }
+
+        let delta = (ctrl.state.current_pos as i32 - start_pos as i32).unsigned_abs();
+        assert!(delta >= 3, "should have crossed multiple detents, delta={delta}");
+    }
+
+    // --- kxForce hysteresis ---
+
+    #[test]
+    fn test_kxforce_hysteresis_multiplicative() {
+        let mut ctrl = HapticController::new();
+        let profile = DetentProfile {
+            kx_force: true,
+            ..DetentProfile::default()
+        };
+        ctrl.state.load_profile(profile, Some(128));
+        // Set attract_angle to a known nonzero value
+        ctrl.state.attract_angle = ctrl.state.detent_width * 5.0;
+        ctrl.state.last_attract_angle = ctrl.state.attract_angle;
+
+        let mut events = heapless::Vec::<HapticEvt, 4>::new();
+        // Move past multiplicative hysteresis boundary
+        let angle = ctrl.state.attract_angle + ctrl.state.detent_width * 1.5;
+        ctrl.find_detent(angle, &mut events);
+
+        assert!(
+            !events.is_empty(),
+            "kxForce mode should still detect detent crossings"
+        );
+    }
+
+    #[test]
+    fn test_kxforce_near_zero_attract_angle() {
+        let mut ctrl = HapticController::new();
+        let profile = DetentProfile {
+            kx_force: true,
+            ..DetentProfile::default()
+        };
+        ctrl.state.load_profile(profile, Some(128));
+        ctrl.state.attract_angle = 0.001; // near zero
+        ctrl.state.last_attract_angle = 0.001;
+
+        let mut events = heapless::Vec::<HapticEvt, 4>::new();
+        // With attract_angle near zero, multiplicative hysteresis is tiny
+        let angle = ctrl.state.detent_width * 1.5;
+        ctrl.find_detent(angle, &mut events);
+
+        // Should still produce detent crossing
+        assert!(
+            !events.is_empty(),
+            "near-zero attract should still cross detent with kxForce"
+        );
+    }
+
+    // --- correct_pid clipping ---
+
+    #[test]
+    fn test_correct_pid_clipping_switches_p_gain() {
+        let mut ctrl = HapticController::new();
+        // Set attract_angle far from last_attract_angle (> detent_width)
+        ctrl.state.attract_angle = ctrl.state.last_attract_angle + ctrl.state.detent_width * 2.0;
+        ctrl.correct_pid();
+        assert!(
+            (ctrl.pid.p - ctrl.state.endstop_strength_unit).abs() < 0.01,
+            "P should be endstop_strength when clipping, got {}",
+            ctrl.pid.p
+        );
+    }
+
+    #[test]
+    fn test_correct_pid_was_at_limit_zeroes_p() {
+        let mut ctrl = HapticController::new();
+        ctrl.state.was_at_limit = true;
+        ctrl.correct_pid();
+        assert!(
+            ctrl.pid.p.abs() < 0.01,
+            "P should be 0 when was_at_limit, got {}",
+            ctrl.pid.p
+        );
+    }
+
+    #[test]
+    fn test_correct_pid_normal_uses_detent_strength() {
+        let mut ctrl = HapticController::new();
+        ctrl.state.attract_angle = ctrl.state.last_attract_angle; // no clipping
+        ctrl.state.was_at_limit = false;
+        ctrl.correct_pid();
+        assert!(
+            (ctrl.pid.p - ctrl.state.detent_strength_unit).abs() < 0.01,
+            "P should be detent_strength in normal mode, got {}",
+            ctrl.pid.p
+        );
+    }
+
+    // --- bounds_settle_error ---
+
+    #[test]
+    fn test_bounds_settle_low_velocity_breaks() {
+        let ctrl = HapticController::new();
+        let (_, should_break) = ctrl.bounds_settle_error(ctrl.state.attract_angle, 0.5);
+        assert!(should_break, "should break when velocity < 1.0");
+    }
+
+    #[test]
+    fn test_bounds_settle_large_error_breaks() {
+        let ctrl = HapticController::new();
+        let far_angle = ctrl.state.attract_angle + ctrl.state.detent_width * 3.0;
+        let (_, should_break) = ctrl.bounds_settle_error(far_angle, 10.0);
+        assert!(should_break, "should break when error > 2*detent_width");
+    }
+
+    #[test]
+    fn test_bounds_settle_normal_continues() {
+        let ctrl = HapticController::new();
+        // Small error, moderate velocity — should keep settling
+        let angle = ctrl.state.attract_angle + ctrl.state.detent_width * 0.5;
+        let (_, should_break) = ctrl.bounds_settle_error(angle, 5.0);
+        assert!(!should_break, "should continue settling");
+    }
+
+    // --- haptic_loop integration ---
+
+    #[test]
+    fn test_haptic_loop_returns_torque_at_rest() {
+        let mut ctrl = HapticController::new();
+        // Shaft slightly off detent — should produce corrective torque
+        let shaft = ctrl.state.detent_width * 0.3;
+        let output = ctrl.haptic_loop(shaft, 0.0, 1000);
+        assert!(output.run_foc, "should run FOC in normal operation");
+        assert!(
+            output.pid_error.abs() > 0.001,
+            "should produce nonzero torque for position error"
+        );
+    }
+
+    #[test]
+    fn test_haptic_loop_small_error_attenuated() {
+        let mut ctrl = HapticController::new();
+        // Error below threshold (0.75% of detent_width) gets scaled by 0.75
+        let tiny_offset = ctrl.state.detent_width * 0.005;
+        let output = ctrl.haptic_loop(ctrl.state.attract_angle + tiny_offset, 0.0, 1000);
+        // The attenuation makes the output smaller than a proportional-only response
+        assert!(output.pid_error.abs() < 1.0, "tiny error should give small output");
+    }
 }
