@@ -17,6 +17,7 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_240=y
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 
 # USB CDC on boot (for serial output)
+# Phase 3B will switch to TinyUSB composite (CDC+HID+MIDI) — requires device for testing
 CONFIG_ESP_CONSOLE_USB_CDC=y
 
 # MCPWM (motor control PWM)
