@@ -5,188 +5,503 @@ Run these tests after flashing the firmware to the ESP32-S3.
 
 ## Prerequisites
 
-- NanoD/Ratchet_H1 device with ESP32-S3
-- USB-C cable connected to host
-- `nanod` CLI built: `cargo build -p nanod` (from repo root)
-- Device flashed: `nanod flash target/xtensa-esp32s3-espidf/release/nanod-firmware`
-- Serial monitor available: `nanod monitor` or `nanod test`
+```bash
+# Build the CLI tool
+cargo build -p nanod --release
 
-## Test Suites
+# Build the firmware (from firmware/ dir)
+cd firmware && cargo build --release
 
----
+# Flash the device
+nanod flash target/xtensa-esp32s3-espidf/release/nanod-firmware
 
-### 1. Serial / COM Protocol
+# Open serial monitor (use this for all manual send/receive tests)
+nanod monitor
+```
 
-Tests the JSON command protocol over USB CDC serial.
-Run: `nanod test --suite serial`
-
-| # | Test | Steps | Expected Result |
-|---|------|-------|----------------|
-| 1.1 | **Get (no profile)** | Send `{"get": true}` before loading any profile | Receive an error or empty message response (no crash) |
-| 1.2 | **Upload profile** | Send `{"profile": {"name": "test1", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 100, "detent_count": 20, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}` | Receive `{"msg": {"type": "info", "text": "profile 'test1' set"}}` |
-| 1.3 | **Get active profile** | Send `{"get": true}` | Receive profile JSON with `"name": "test1"` and haptic config matching what was sent |
-| 1.4 | **Settings roundtrip** | Send `{"settings": {"midi_channel": 7, "led_brightness": 42}}`, then `{"get_settings": true}` | Settings response has `midi_channel: 7` and `led_brightness: 42` |
-| 1.5 | **List profiles** | Upload a second profile `{"profile": {"name": "test2"}}`, then send `{"list": true}` | Response contains `"profiles": ["test1", "test2"]` (or superset) |
-| 1.6 | **Invalid JSON** | Send `this is not valid json!!!` | Receive an error message (device does not crash or hang) |
-| 1.7 | **Save to SPIFFS** | Send `{"save": true}` | Receive `"saving to flash"` confirmation |
-| 1.8 | **Load profile** | Send `{"load": "test1"}` | Receive profile JSON for "test1" |
-| 1.9 | **Motor recalibrate** | Send `{"motor": {"recalibrate": true}}` | Receive `"recalibrating motor"` confirmation |
+Everything below assumes `nanod monitor` is open. Lines starting with `>>>` are what you type/paste into the monitor. Lines starting with `<<<` are expected responses.
 
 ---
 
-### 2. Motor / FOC
+## 1. Serial / COM Protocol
 
-Tests motor control, encoder, and calibration.
-Run: `nanod test --suite motor`
+**Automated:** `nanod test --suite serial`
 
-| # | Test | Steps | Expected Result |
-|---|------|-------|----------------|
-| 2.1 | **Recalibrate** | Send `{"motor": {"recalibrate": true}}` | Device responds with recalibration message; motor may briefly spin during calibration |
-| 2.2 | **Encoder events** | Load a profile (60 detents), slowly rotate knob back and forth for 5 seconds | At least 2 `{"angle": {"cur_pos": N}}` events received with changing N |
-| 2.3 | **Detent feel** | Rotate the knob slowly | **Manual check:** You should feel distinct haptic detent clicks |
+Or run manually:
 
----
+### 1.1 Get (no profile)
+```
+>>> {"get": true}
+<<< {"msg":{"type":"error","text":"no active profile"}}
+```
 
-### 3. Haptic Detents
+### 1.2 Upload profile
+```
+>>> {"profile": {"name": "test1", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 100, "detent_count": 20, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}
+<<< {"msg":{"type":"info","text":"profile 'test1' set"}}
+```
 
-Tests haptic feedback profiles and detent behavior.
-Run: `nanod test --suite haptic`
+### 1.3 Get active profile
+```
+>>> {"get": true}
+<<< {"profile":{"name":"test1","haptic":{"mode":"regular","start_pos":0,"end_pos":100,...}}}
+```
+Verify: name is "test1", haptic config matches what was sent.
 
-| # | Test | Steps | Expected Result |
-|---|------|-------|----------------|
-| 3.1 | **Default detents (60)** | Upload profile: `{"profile": {"name": "default_test", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 255, "detent_count": 60, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}`. Rotate knob slowly through several detents. | At least 3 angle position events received |
-| 3.2 | **Endstop feel** | Upload small-range profile: `{"profile": {"name": "endstop_test", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 10, "detent_count": 10, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 5.0}}}`. Rotate until you hit the end. | **Manual check:** You feel a firm endstop that prevents further rotation |
-| 3.3 | **Vernier mode** | Upload vernier profile: `{"profile": {"name": "vernier_test", "haptic": {"mode": "vernier", "start_pos": 0, "end_pos": 20, "detent_count": 20, "vernier": 5, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}`. Rotate slowly. | **Manual check:** Detents feel finer/closer together than test 3.1 |
-| 3.4 | **Profile switch** | Upload profile A (10 detents, wide spacing), feel it. Then upload profile B (60 detents, close spacing), feel it. | **Manual check:** Detent spacing changes noticeably between the two profiles |
-| 3.5 | **High detent strength** | Upload with `detent_strength: 8.0` | **Manual check:** Detents feel much stronger/stiffer than 3.0 |
-| 3.6 | **Zero detent strength** | Upload with `detent_strength: 0.0` | **Manual check:** Knob spins freely with no detent resistance |
+### 1.4 Settings roundtrip
+```
+>>> {"settings": {"midi_channel": 7, "led_brightness": 42}}
+<<< {"msg":{"type":"info","text":"settings updated"}}
 
----
+>>> {"get_settings": true}
+<<< {"settings":{"midi_channel":7,...,"led_brightness":42,...}}
+```
+Verify: midi_channel=7, led_brightness=42.
 
-### 4. Buttons
+### 1.5 List profiles
+```
+>>> {"profile": {"name": "test2"}}
+<<< {"msg":{"type":"info","text":"profile 'test2' set"}}
 
-Tests the 4 physical buttons (GPIO polling + debounce).
-Run: `nanod test --suite buttons`
+>>> {"list": true}
+<<< {"profiles":["test1","test2"]}
+```
 
-| # | Test | Steps | Expected Result |
-|---|------|-------|----------------|
-| 4.1 | **Button A press** | Press and release button A (top) | Receive `{"key": {"num": 0, "state": "pressed"}}` then `{"key": {"num": 0, "state": "released"}}` on serial |
-| 4.2 | **Button B press** | Press and release button B | key num=1, pressed then released |
-| 4.3 | **Button C press** | Press and release button C | key num=2, pressed then released |
-| 4.4 | **Button D press** | Press and release button D | key num=3, pressed then released |
-| 4.5 | **Simultaneous press** | Hold button A, then also press button B | Two separate press events, key_state reflects both buttons held |
-| 4.6 | **Rapid press** | Tap button A rapidly 10 times | 10 press/release pairs (no missed or doubled events) |
-| 4.7 | **No ghost events** | Leave device untouched for 10 seconds | No key events on serial |
+### 1.6 Invalid JSON
+```
+>>> this is not valid json!!!
+<<< {"msg":{"type":"error","text":"..."}}
+```
+Verify: error response, device does not crash or hang.
 
----
+### 1.7 Save to SPIFFS
+```
+>>> {"save": true}
+<<< {"msg":{"type":"info","text":"saving to flash"}}
+```
 
-### 5. LEDs — Ring (60 LEDs)
+### 1.8 Load profile
+```
+>>> {"load": "test1"}
+<<< {"profile":{"name":"test1",...}}
+```
 
-Tests the 60-LED ring driven via RMT on pin 38.
-Run: `nanod test --suite leds`
-
-| # | Test | Steps | Expected Result |
-|---|------|-------|----------------|
-| 5.1 | **Ring lights up** | Power on device (default profile loaded) | **Visual:** Ring LEDs illuminate with default colors |
-| 5.2 | **Pointer tracks knob** | Slowly rotate the knob | **Visual:** A bright pointer LED moves along the ring following your rotation |
-| 5.3 | **Halves rendering** | Rotate to midpoint | **Visual:** LEDs before the pointer are one color (primary), LEDs after are another (secondary), pointer is white |
-| 5.4 | **Full range** | Rotate from start to end of detent range | **Visual:** Pointer moves from one end of the ring to the other |
-| 5.5 | **Custom colors** | Upload profile with LED config: `{"profile": {"name": "color_test", "led": {"brightness": 200, "pointer_col": {"r": 255, "g": 0, "b": 0}, "primary_col": {"r": 0, "g": 255, "b": 0}, "secondary_col": {"r": 0, "g": 0, "b": 255}}}}` | **Visual:** Pointer = red, before = green, after = blue |
-| 5.6 | **Brightness control** | Send `{"settings": {"led_brightness": 20}}` | **Visual:** All LEDs become much dimmer |
-| 5.7 | **Brightness max** | Send `{"settings": {"led_brightness": 255}}` | **Visual:** All LEDs at full brightness |
-| 5.8 | **LEDs disabled** | Upload profile with `"led": {"enabled": false}` | **Visual:** All ring LEDs turn off |
-| 5.9 | **Orientation** | Send `{"settings": {"orientation": 1}}`, then `2`, then `3`, then `0` | **Visual:** Ring display rotates 90° each step |
-
----
-
-### 6. LEDs — Buttons (8 LEDs)
-
-Tests the 8-LED button indicator strip driven via RMT on pin 42.
-
-| # | Test | Steps | Expected Result |
-|---|------|-------|----------------|
-| 6.1 | **Button LEDs idle** | Don't press any buttons | **Visual:** Each button's LED pair shows its idle color (4 different colors by default) |
-| 6.2 | **Button A pressed** | Press and hold button A | **Visual:** Button A's LED pair (LEDs 3,4) switches to white (pressed color) |
-| 6.3 | **Button B pressed** | Press and hold button B | **Visual:** Button B's LED pair (LEDs 2,5) switches to white |
-| 6.4 | **All buttons pressed** | Hold all 4 buttons | **Visual:** All 8 button LEDs are white |
-| 6.5 | **Release restores idle** | Release all buttons | **Visual:** Button LEDs return to their idle colors |
-| 6.6 | **Custom button colors** | Upload profile with custom button_colors in LED config | **Visual:** Button idle/pressed colors match the uploaded config |
+### 1.9 Motor recalibrate command
+```
+>>> {"motor": {"recalibrate": true}}
+<<< {"msg":{"type":"info","text":"recalibrating motor"}}
+```
 
 ---
 
-### 7. Inter-Thread Communication
+## 2. Motor / FOC
 
-Tests that data flows correctly between FOC, COM, and HMI threads.
+**Automated:** `nanod test --suite motor`
 
-| # | Test | Steps | Expected Result |
-|---|------|-------|----------------|
-| 7.1 | **Profile → haptic** | Upload a profile with haptic config via serial | Detent feel changes immediately (no reboot needed) |
-| 7.2 | **Profile → LEDs** | Upload a profile with LED config via serial | Ring colors change immediately |
-| 7.3 | **Settings → LEDs** | Send settings with changed brightness | LED brightness changes immediately |
-| 7.4 | **Button → serial** | Press a button | Key event appears on serial output within <100ms |
-| 7.5 | **Angle → ring** | Rotate knob | Ring pointer updates smoothly (no stutter or lag) |
-| 7.6 | **Rapid profile switch** | Alternate between two profiles rapidly (10x in 5 seconds) | No crash, last profile's settings are active |
+### 2.1 Recalibrate
+```
+>>> {"motor": {"recalibrate": true}}
+<<< {"msg":{"type":"info","text":"recalibrating motor"}}
+```
+Note: motor may briefly spin during calibration.
 
----
+### 2.2 Encoder events
+```
+>>> {"profile": {"name": "enc_test", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 255, "detent_count": 60, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}
+```
+Then slowly rotate knob back and forth for 5 seconds.
+```
+<<< {"angle":{"cur_pos":42}}
+<<< {"angle":{"cur_pos":43}}
+<<< {"angle":{"cur_pos":44}}
+...
+```
+Verify: at least 2 angle events with changing `cur_pos`.
 
-### 8. Stress / Edge Cases
-
-| # | Test | Steps | Expected Result |
-|---|------|-------|----------------|
-| 8.1 | **Flood serial** | Send 100 JSON commands in rapid succession | Device processes them all (may queue/drop excess), does not crash |
-| 8.2 | **Large JSON** | Send a profile with a very long name (200 chars) | Either accepted or graceful error (no crash) |
-| 8.3 | **Long uptime** | Leave device running for 30 minutes with occasional knob rotation | No crash, no memory leak (LEDs still responsive) |
-| 8.4 | **Power cycle** | Unplug and replug USB | Device boots cleanly, default state restored |
-| 8.5 | **Simultaneous knob + buttons** | Rotate knob while pressing buttons | Both angle and key events arrive on serial; LEDs update correctly |
-
----
-
-### 9. USB HID / MIDI (Phase 3B — when implemented)
-
-These tests are for after TinyUSB composite device is wired up.
-
-| # | Test | Steps | Expected Result |
-|---|------|-------|----------------|
-| 9.1 | **USB enumeration** | Connect device, check `lsusb` (Linux) or System Report (macOS) | Device shows as composite: CDC + HID + MIDI |
-| 9.2 | **CDC serial still works** | Send `{"get": true}` via serial | JSON response received (CDC not broken by adding HID/MIDI) |
-| 9.3 | **MIDI CC output** | Configure knob for MIDI CC, rotate knob | Host DAW/MIDI monitor receives CC messages |
-| 9.4 | **MIDI channel** | Set `midi_channel: 5`, rotate knob | CC messages arrive on channel 5 |
-| 9.5 | **HID keyboard** | Configure button A for keyboard output, press button A | Host receives keypress |
-| 9.6 | **HID mouse** | Configure button B for mouse button, press button B | Host registers mouse click |
-| 9.7 | **HID gamepad** | Configure button C for gamepad, press button C | Host sees gamepad button press |
-| 9.8 | **MIDI + HID simultaneous** | Rotate knob (MIDI CC) while pressing button (keyboard) | Both MIDI and keyboard events arrive on host |
+### 2.3 Detent feel
+Rotate knob slowly.
+**Manual check:** you should feel distinct haptic detent clicks.
 
 ---
 
-## Quick Smoke Test
+## 3. Haptic Detents
 
-If you only have 5 minutes, run these:
+**Automated:** `nanod test --suite haptic`
 
-1. Flash firmware, open `nanod monitor`
-2. Send `{"profile": {"name": "smoke", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 255, "detent_count": 60, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}` — should get ack
-3. Rotate knob — should feel detents and see angle events on serial
-4. Send `{"get": true}` — should get profile back
-5. Press each button — should see key events on serial
-6. Check ring LEDs track the knob pointer
-7. Check button LEDs change on press
+### 3.1 Default detents (60)
+```
+>>> {"profile": {"name": "default_test", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 255, "detent_count": 60, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}
+```
+Rotate knob slowly through several detents.
+Verify: at least 3 angle events received. Detents feel evenly spaced.
 
-If all 7 pass, the core firmware is working.
+### 3.2 Endstop feel
+```
+>>> {"profile": {"name": "endstop_test", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 10, "detent_count": 10, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 5.0}}}
+```
+Rotate until you hit the end.
+**Manual check:** you feel a firm endstop that prevents further rotation.
+
+### 3.3 Vernier mode
+```
+>>> {"profile": {"name": "vernier_test", "haptic": {"mode": "vernier", "start_pos": 0, "end_pos": 20, "detent_count": 20, "vernier": 5, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}
+```
+Rotate slowly.
+**Manual check:** detents feel finer/closer together than test 3.1 (20 coarse × 5 vernier = 100 fine steps).
+
+### 3.4 Profile switch
+```
+>>> {"profile": {"name": "switch_A", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 100, "detent_count": 10, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}
+```
+Feel the wide detent spacing. Then:
+```
+>>> {"profile": {"name": "switch_B", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 100, "detent_count": 60, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}
+```
+**Manual check:** detent spacing changes noticeably (much closer together).
+
+### 3.5 High detent strength
+```
+>>> {"profile": {"name": "strong", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 255, "detent_count": 30, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 8.0}}}
+```
+**Manual check:** detents feel much stiffer than strength 3.0.
+
+### 3.6 Zero detent strength
+```
+>>> {"profile": {"name": "free", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 255, "detent_count": 30, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 0.0}}}
+```
+**Manual check:** knob spins freely with no detent resistance.
 
 ---
 
-## Automated vs Manual
+## 4. Buttons
 
-- **Automated** (`nanod test`): serial protocol, motor recalibrate, encoder events, haptic angle events
-- **Manual (visual)**: LED colors, ring pointer tracking, brightness, orientation
-- **Manual (physical)**: detent feel, endstop feel, vernier feel, button tactile response
+**Automated:** `nanod test --suite buttons`
 
-The `nanod test` command handles automated tests. Manual tests require you to observe LEDs and feel the haptics.
+For manual testing, open `nanod monitor` and watch for key events.
+
+### 4.1 Button A
+Press and release button A (top).
+```
+<<< {"key":{"num":0,"state":"pressed"}}
+<<< {"key":{"num":0,"state":"released"}}
+```
+
+### 4.2 Button B
+Press and release button B.
+```
+<<< {"key":{"num":1,"state":"pressed"}}
+<<< {"key":{"num":1,"state":"released"}}
+```
+
+### 4.3 Button C
+Press and release button C.
+```
+<<< {"key":{"num":2,"state":"pressed"}}
+<<< {"key":{"num":2,"state":"released"}}
+```
+
+### 4.4 Button D
+Press and release button D.
+```
+<<< {"key":{"num":3,"state":"pressed"}}
+<<< {"key":{"num":3,"state":"released"}}
+```
+
+### 4.5 Simultaneous press
+Hold button A, then also press button B.
+```
+<<< {"key":{"num":0,"state":"pressed"}}
+<<< {"key":{"num":1,"state":"pressed"}}
+```
+Verify: both events arrive, no missed presses.
+
+### 4.6 Rapid press
+Tap button A rapidly 10 times.
+Verify: 10 pressed + 10 released events (no missed or doubled).
+
+### 4.7 No ghost events
+Leave device untouched for 10 seconds.
+Verify: no key events appear on serial.
+
+---
+
+## 5. LEDs — Ring (60 LEDs)
+
+### 5.1 Ring lights up
+Power on device. Load a profile:
+```
+>>> {"profile": {"name": "led_test", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 255, "detent_count": 60, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}
+```
+**Visual:** ring LEDs illuminate with default colors (teal primary, dark red secondary, white pointer).
+
+### 5.2 Pointer tracks knob
+Slowly rotate the knob.
+**Visual:** a bright white pointer LED moves along the ring following your rotation.
+
+### 5.3 Halves rendering
+Rotate to roughly the midpoint.
+**Visual:** LEDs before the pointer are teal (primary), LEDs after are dark red (secondary), pointer is white.
+
+### 5.4 Full range
+Rotate from start to end of detent range.
+**Visual:** pointer moves from one end of the ring to the other.
+
+### 5.5 Custom colors (red/green/blue)
+```
+>>> {"profile": {"name": "rgb_test", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 255, "detent_count": 60, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}, "led": {"enabled": true, "brightness": 200, "pointer_col": {"r": 255, "g": 0, "b": 0}, "primary_col": {"r": 0, "g": 255, "b": 0}, "secondary_col": {"r": 0, "g": 0, "b": 255}, "button_colors": [{"idle": {"r": 255, "g": 0, "b": 0}, "pressed": {"r": 255, "g": 255, "b": 255}}, {"idle": {"r": 0, "g": 255, "b": 0}, "pressed": {"r": 255, "g": 255, "b": 255}}, {"idle": {"r": 0, "g": 0, "b": 255}, "pressed": {"r": 255, "g": 255, "b": 255}}, {"idle": {"r": 255, "g": 255, "b": 0}, "pressed": {"r": 255, "g": 255, "b": 255}}]}}}
+```
+**Visual:** pointer = RED, before pointer = GREEN, after pointer = BLUE.
+
+### 5.6 Brightness low
+```
+>>> {"settings": {"led_brightness": 20}}
+```
+**Visual:** all LEDs become much dimmer.
+
+### 5.7 Brightness max
+```
+>>> {"settings": {"led_brightness": 255}}
+```
+**Visual:** all LEDs at full brightness.
+
+### 5.8 LEDs disabled
+```
+>>> {"profile": {"name": "dark", "led": {"enabled": false}}}
+```
+**Visual:** all ring LEDs turn off.
+
+### 5.9 LEDs re-enabled
+```
+>>> {"profile": {"name": "bright", "led": {"enabled": true, "brightness": 150}}}
+```
+**Visual:** ring LEDs turn back on.
+
+### 5.10 Orientation rotation
+```
+>>> {"settings": {"orientation": 0}}
+```
+Note pointer position. Then:
+```
+>>> {"settings": {"orientation": 1}}
+```
+**Visual:** entire ring display rotates 90° clockwise.
+```
+>>> {"settings": {"orientation": 2}}
+```
+**Visual:** 180° from original.
+```
+>>> {"settings": {"orientation": 3}}
+```
+**Visual:** 270° from original.
+```
+>>> {"settings": {"orientation": 0}}
+```
+**Visual:** back to original position.
+
+---
+
+## 6. LEDs — Buttons (8 LEDs)
+
+### 6.1 Button LEDs idle
+Don't press any buttons.
+**Visual:** each button's LED pair shows a distinct idle color (defaults: teal, navy, purple, dark red).
+
+### 6.2 Button A press
+Press and hold button A.
+**Visual:** button A's LED pair switches to white.
+
+### 6.3 Button B press
+Press and hold button B.
+**Visual:** button B's LED pair switches to white.
+
+### 6.4 All buttons pressed
+Hold all 4 buttons simultaneously.
+**Visual:** all 8 button LEDs are white.
+
+### 6.5 Release restores idle
+Release all buttons.
+**Visual:** button LEDs return to their idle colors.
+
+### 6.6 Custom button colors
+Use the profile from test 5.5 (RGB test). Button idle colors should be:
+- Button A: red
+- Button B: green
+- Button C: blue
+- Button D: yellow
+
+Press each button — should switch to white.
+
+---
+
+## 7. Inter-Thread Communication
+
+### 7.1 Profile → haptic (instant)
+```
+>>> {"profile": {"name": "ipc1", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 100, "detent_count": 10, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 5.0}}}
+```
+Verify: detent feel changes immediately without rebooting.
+
+### 7.2 Profile → LEDs (instant)
+```
+>>> {"profile": {"name": "ipc2", "led": {"brightness": 200, "pointer_col": {"r": 0, "g": 255, "b": 0}, "primary_col": {"r": 255, "g": 0, "b": 0}, "secondary_col": {"r": 0, "g": 0, "b": 255}}}}
+```
+**Visual:** ring colors change immediately.
+
+### 7.3 Settings → brightness (instant)
+```
+>>> {"settings": {"led_brightness": 30}}
+```
+**Visual:** brightness drops immediately.
+```
+>>> {"settings": {"led_brightness": 200}}
+```
+**Visual:** brightness restores immediately.
+
+### 7.4 Button → serial (<100ms)
+Press button A while watching serial output.
+Verify: `{"key":{"num":0,"state":"pressed"}}` appears with no perceptible delay.
+
+### 7.5 Angle → ring (smooth)
+Rotate knob at various speeds.
+**Visual:** ring pointer tracks smoothly with no stutter or visible lag.
+
+### 7.6 Rapid profile switch
+Paste these 10 commands rapidly:
+```
+>>> {"profile": {"name": "A", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 100, "detent_count": 10, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}
+>>> {"profile": {"name": "B", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 100, "detent_count": 60, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}
+>>> {"profile": {"name": "A", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 100, "detent_count": 10, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}
+>>> {"profile": {"name": "B", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 100, "detent_count": 60, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}
+>>> {"profile": {"name": "A", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 100, "detent_count": 10, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}
+```
+Verify: no crash, last profile's detent count is active (10 in this case).
+
+---
+
+## 8. Stress / Edge Cases
+
+### 8.1 Flood serial
+Send `{"get_settings": true}` 100 times in rapid succession (script or paste).
+Verify: device responds to all (may be slow), does not crash.
+
+### 8.2 Large profile name
+```
+>>> {"profile": {"name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+```
+Verify: either accepted or graceful error (no crash).
+
+### 8.3 Long uptime
+Leave device powered for 30+ minutes. Occasionally rotate knob and press buttons.
+Verify: no crash, LEDs still responsive, events still arrive on serial.
+
+### 8.4 Power cycle
+Unplug USB cable, wait 3 seconds, replug.
+Verify: device boots cleanly, `nanod monitor` can reconnect, serial protocol works.
+
+### 8.5 Simultaneous knob + buttons
+Rotate knob continuously while pressing and releasing buttons.
+Verify: both angle events and key events arrive on serial, LEDs update for both.
+
+---
+
+## 9. USB HID / MIDI (Phase 3B — not yet implemented)
+
+These tests are placeholders for when TinyUSB composite is wired up.
+
+### 9.1 USB enumeration
+```bash
+# macOS
+system_profiler SPUSBDataType | grep -A5 "Nano_D"
+
+# Linux
+lsusb | grep "Nano_D"
+```
+Expected: device shows as composite with CDC + HID + MIDI interfaces.
+
+### 9.2 CDC still works after composite
+```
+>>> {"get": true}
+```
+Verify: JSON response received (adding HID/MIDI didn't break CDC serial).
+
+### 9.3 MIDI CC output
+Configure knob for MIDI CC, rotate knob.
+```bash
+# macOS — open Audio MIDI Setup, verify MIDI device appears
+# Use a MIDI monitor app to see CC messages
+
+# Linux
+amidi -l                    # list MIDI devices
+aseqdump -p <port>          # monitor MIDI events
+```
+Verify: CC messages arrive as you rotate.
+
+### 9.4-9.8
+(Deferred until TinyUSB composite is implemented)
+
+---
+
+## Quick Smoke Test (5 minutes)
+
+Run this sequence to validate the core firmware:
+
+```bash
+# 1. Flash and open monitor
+nanod flash firmware.bin
+nanod monitor
+```
+
+```
+# 2. Upload a profile
+>>> {"profile": {"name": "smoke", "haptic": {"mode": "regular", "start_pos": 0, "end_pos": 255, "detent_count": 60, "vernier": 1, "kx_force": false, "output_ramp": 5000.0, "detent_strength": 3.0}}}
+<<< {"msg":{"type":"info","text":"profile 'smoke' set"}}
+
+# 3. Rotate knob — feel detents, watch for angle events
+<<< {"angle":{"cur_pos":...}}
+
+# 4. Read back profile
+>>> {"get": true}
+<<< {"profile":{"name":"smoke",...}}
+
+# 5. Press each button — watch for key events
+<<< {"key":{"num":0,"state":"pressed"}}
+<<< {"key":{"num":0,"state":"released"}}
+
+# 6. Visual: ring LEDs track knob pointer
+# 7. Visual: button LEDs change color on press
+```
+
+**Pass criteria:** All 7 checks above work. If any fail, check logs with `nanod monitor --baud 115200` for error output.
+
+---
+
+## Automated Test Runner
+
+For the automated suites, use the `nanod test` command:
+
+```bash
+# Run all automated suites
+nanod test all
+
+# Run individual suites
+nanod test serial
+nanod test motor
+nanod test haptic
+nanod test buttons
+nanod test leds
+
+# Specify port if not auto-detected
+nanod test all --port /dev/ttyACM0
+```
+
+The automated runner sends JSON commands, waits for responses, and reports pass/fail. Physical checks (detent feel, LED visuals) prompt you with y/n questions.
 
 ---
 
 ## Known Limitations (current build)
 
-- **No USB HID/MIDI**: Phase 3B deferred — device currently only outputs CDC serial
-- **No SPIFFS save/load persistence**: Save command runs but SPIFFS partition may need formatting on first boot
-- **No motor recalibration routine**: The `recalibrate` command is acknowledged but the actual calibration sequence is a TODO
-- **No display or audio**: Phases 4-5 not started
+- **No USB HID/MIDI** — Phase 3B deferred. Device only outputs CDC serial.
+- **No SPIFFS persistence across reboots** — save command runs but partition may need formatting on first boot.
+- **Motor recalibration is a stub** — command is acknowledged but full calibration sequence is a TODO.
+- **No display or audio** — Phases 4-5 not started.
+- **Angle events may not arrive** — the FOC→HMI→COM channel depends on all three threads running; if FOC thread fails to init (encoder/driver issue), no angle events will appear.
