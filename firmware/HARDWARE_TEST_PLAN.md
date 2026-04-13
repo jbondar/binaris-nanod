@@ -5,15 +5,18 @@ Run these tests after flashing the firmware to the ESP32-S3.
 
 ## Prerequisites
 
+If this is your first time flashing, follow the [First Boot Guide](FIRST_BOOT.md) first.
+
 ```bash
-# Build the CLI tool
+# Build the CLI tool (from repo root)
 cargo build -p nanod --release
 
-# Build the firmware (from firmware/ dir)
-cd firmware && cargo build --release
+# Build and flash the firmware (from firmware/ dir)
+cd firmware
+cargo run --release    # builds + flashes + opens monitor
 
-# Flash the device
-nanod flash target/xtensa-esp32s3-espidf/release/nanod-firmware
+# Or flash separately
+espflash flash target/xtensa-esp32s3-espidf/release/nanod-firmware
 
 # Open serial monitor (use this for all manual send/receive tests)
 nanod monitor
