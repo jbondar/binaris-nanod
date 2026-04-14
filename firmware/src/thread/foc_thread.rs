@@ -217,9 +217,10 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
     // --- Load or run calibration ---
     let cal = calibration::load_calibration(nvs_partition.clone())?;
     if cal.direction != Direction::Unknown {
+        // HACK: invert direction to test if calibration detected wrong polarity
         foc.sensor_direction = match cal.direction {
-            Direction::Cw => 1,
-            Direction::Ccw => -1,
+            Direction::Cw => -1,  // inverted
+            Direction::Ccw => 1,  // inverted
             Direction::Unknown => 1,
         };
         foc.zero_electrical_angle = cal.zero_angle;
@@ -249,12 +250,12 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
     let default_profile = DetentProfile {
         mode: HapticMode::Regular,
         start_pos: 0,
-        end_pos: 255,
-        detent_count: 60,
+        end_pos: 20,
+        detent_count: 20,
         vernier: 1,
         kx_force: false,
         output_ramp: 5000.0,
-        detent_strength: 3.0,
+        detent_strength: 2.0,
     };
     haptic.state.load_profile(default_profile, None);
     log::info!("FOC: loaded default haptic profile (60 detents, 0-255)");
@@ -327,21 +328,14 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
             let duty = foc.compute_torque(output.pid_error);
             driver.set_pwm(duty)?;
         } else {
-            loop {
-                let settle_now = unsafe { esp_timer_get_time() } as u64;
-                let settle_angle = encoder.read_angle()?;
-                foc.update_sensor(settle_angle, settle_now);
-
-                let (error, should_break) =
-                    haptic.bounds_settle_error(foc.shaft_angle, foc.shaft_velocity);
-
-                let duty = foc.compute_torque(haptic.pid.call(error, settle_now));
-                driver.set_pwm(duty)?;
-
-                if should_break {
-                    break;
-                }
-            }
+            // Bounds settling — simplified for now, just break immediately
+            // Full settle loop can cause lockups during initial bringup
+            let settle_angle = encoder.read_angle()?;
+            let settle_now = unsafe { esp_timer_get_time() } as u64;
+            foc.update_sensor(settle_angle, settle_now);
+            let (error, _) = haptic.bounds_settle_error(foc.shaft_angle, foc.shaft_velocity);
+            let duty = foc.compute_torque(haptic.pid.call(error, settle_now));
+            driver.set_pwm(duty)?;
         }
 
         // Publish angle snapshot to HMI (throttled) + debug logging
@@ -352,19 +346,21 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
                 current_pos: haptic.state.current_pos as u16,
             });
 
-            // Debug: log FOC state periodically
-            if (now_us / 1_000_000) % 2 == 0 && (now_us / 10_000) % 50 == 0 {
-                let raw = encoder.get_raw_angle().unwrap_or(-1.0);
-                let duty = foc.compute_torque(output.pid_error);
-                log::info!(
-                    "FOC: raw={:.3} angle={:.3} vel={:.1} pos={} err={:.3} duty=({:.2},{:.2},{:.2})",
-                    raw,
-                    foc.shaft_angle,
-                    foc.shaft_velocity,
-                    haptic.state.current_pos,
-                    output.pid_error,
-                    duty.a, duty.b, duty.c,
-                );
+            // Debug: log FOC state every ~2 seconds
+            static mut DBG_LAST: u64 = 0;
+            let dbg_interval = 2_000_000; // 2 seconds
+            unsafe {
+                if now_us.wrapping_sub(DBG_LAST) >= dbg_interval {
+                    DBG_LAST = now_us;
+                    log::info!(
+                        "FOC: angle={:.3} vel={:.1} pos={} attract={:.3} err={:.3}",
+                        foc.shaft_angle,
+                        foc.shaft_velocity,
+                        haptic.state.current_pos,
+                        haptic.state.attract_angle,
+                        output.pid_error,
+                    );
+                }
             }
         }
 

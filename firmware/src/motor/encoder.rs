@@ -67,18 +67,6 @@ impl<'a> Mt6701Encoder<'a> {
         // MT6701 SSI: first 14 bits are the angle value (MSB first)
         let raw = ((buf[0] as u16) << 6) | ((buf[1] as u16) >> 2);
 
-        // Debug: log raw bytes periodically
-        static mut DBG_COUNT: u32 = 0;
-        unsafe {
-            DBG_COUNT += 1;
-            if DBG_COUNT % 5000 == 0 {
-                log::info!(
-                    "ENC raw bytes: [{:#04X}, {:#04X}, {:#04X}] → raw14={}",
-                    buf[0], buf[1], buf[2], raw & 0x3FFF
-                );
-            }
-        }
-
         Ok(raw & 0x3FFF)
     }
 
