@@ -115,7 +115,10 @@ fn com_task_inner(ctx: ComContext) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Err(e) => {
-                log::warn!("COM read error: {e}");
+                // EAGAIN (os error 11) is normal when no USB CDC is connected
+                if e.kind() != std::io::ErrorKind::WouldBlock {
+                    log::warn!("COM read error: {e}");
+                }
                 unsafe { vTaskDelay(LOOP_DELAY_MS) };
             }
         }

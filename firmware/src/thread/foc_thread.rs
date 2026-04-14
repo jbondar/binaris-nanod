@@ -166,5 +166,8 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
                 current_pos: haptic.state.current_pos as u16,
             });
         }
+
+        // Yield briefly to feed the watchdog (IDLE task on Core 1 needs CPU time)
+        unsafe { vTaskDelay(1) };
     }
 }
