@@ -16,12 +16,15 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_240=y
 # Watchdog
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 
-# USB CDC on boot (for serial output)
-# Phase 3B will switch to TinyUSB composite (CDC+HID+MIDI) — requires device for testing
-CONFIG_ESP_CONSOLE_USB_CDC=y
+# Main task stack size (default 3584 is too small for Rust std + channel setup)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Console on USB Serial/JTAG (built-in debug port, always available)
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 # MCPWM (motor control PWM)
 CONFIG_SOC_MCPWM_SUPPORTED=y
 
-# Partition table — use default single factory, no OTA
-CONFIG_PARTITION_TABLE_SINGLE_APP=y
+# Partition table — custom: 3MB app, 960KB SPIFFS, 24KB NVS
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="/Users/jake.bondar/repos/NanoD-Integrations/firmware/partitions.csv"
