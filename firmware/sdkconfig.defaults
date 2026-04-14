@@ -13,8 +13,10 @@ CONFIG_SPIRAM=y
 # CPU: 240MHz
 CONFIG_ESP_DEFAULT_CPU_FREQ_240=y
 
-# Watchdog
+# Watchdog — don't watch IDLE tasks (FOC loop monopolizes Core 1)
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=y
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
 
 # Main task stack size (default 3584 is too small for Rust std + channel setup)
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

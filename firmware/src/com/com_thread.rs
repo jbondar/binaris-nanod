@@ -9,7 +9,8 @@ use crate::ipc::ComContext;
 const COM_STACK_SIZE: usize = 8192;
 const COM_PRIORITY: u32 = 1;
 const COM_CORE: i32 = 0;
-const LOOP_DELAY_MS: u32 = 10; // 100Hz
+// FreeRTOS tick rate is 100Hz (10ms/tick). vTaskDelay takes ticks, not ms.
+const LOOP_DELAY_TICKS: u32 = 1; // 1 tick = 10ms
 
 /// Spawn the COM thread on Core 0.
 pub fn spawn_com_thread(ctx: ComContext) {
@@ -59,7 +60,7 @@ fn com_task_inner(ctx: ComContext) -> Result<(), Box<dyn std::error::Error>> {
         match reader.read_line(&mut line_buf) {
             Ok(0) => {
                 // No data / EOF — sleep and retry
-                unsafe { vTaskDelay(LOOP_DELAY_MS) };
+                unsafe { vTaskDelay(LOOP_DELAY_TICKS) };
             }
             Ok(_) => {
                 let line = line_buf.trim();
@@ -119,7 +120,7 @@ fn com_task_inner(ctx: ComContext) -> Result<(), Box<dyn std::error::Error>> {
                 if e.kind() != std::io::ErrorKind::WouldBlock {
                     log::warn!("COM read error: {e}");
                 }
-                unsafe { vTaskDelay(LOOP_DELAY_MS) };
+                unsafe { vTaskDelay(LOOP_DELAY_TICKS) };
             }
         }
 

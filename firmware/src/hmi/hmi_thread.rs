@@ -22,7 +22,8 @@ use super::leds::Ws2811Driver;
 const HMI_STACK_SIZE: usize = 8192;
 const HMI_PRIORITY: u32 = 1;
 const HMI_CORE: i32 = 0;
-const LOOP_DELAY_MS: u32 = 10; // 100Hz
+// FreeRTOS tick rate is 100Hz (10ms/tick). vTaskDelay takes ticks, not ms.
+const LOOP_DELAY_TICKS: u32 = 1; // 1 tick = 10ms → 100Hz loop
 const LED_SHOW_INTERVAL_MS: u32 = 16; // ~60fps
 
 /// Spawn the HMI thread on Core 0.
@@ -163,6 +164,6 @@ fn hmi_task_inner(ctx: HmiContext) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // --- 5. Sleep ---
-        unsafe { vTaskDelay(LOOP_DELAY_MS) };
+        unsafe { vTaskDelay(LOOP_DELAY_TICKS) };
     }
 }

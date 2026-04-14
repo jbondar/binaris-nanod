@@ -8,8 +8,9 @@
 /// Key state bitmask for each button index.
 const KEY_BITS: [u8; 4] = [0x1, 0x2, 0x4, 0x8];
 
-/// Default debounce time in milliseconds (matches AceButton click delay).
-const DEFAULT_DEBOUNCE_MS: u32 = 50;
+/// Default debounce time in milliseconds.
+/// 15ms is enough for mechanical switches (typical bounce is 5-10ms).
+const DEFAULT_DEBOUNCE_MS: u32 = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonEventType {
@@ -165,11 +166,11 @@ mod tests {
         assert!(events.is_empty());
 
         // Before debounce window: still no event
-        let events = db.update(levels, 40);
+        let events = db.update(levels, 10);
         assert!(events.is_empty());
 
-        // At debounce window: event fires
-        let events = db.update(levels, 50);
+        // At debounce window (15ms): event fires
+        let events = db.update(levels, 15);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].index, 0);
         assert_eq!(events[0].event_type, ButtonEventType::Pressed);
@@ -205,9 +206,9 @@ mod tests {
         press(&mut levels, 0);
         db.update(levels, 0);
 
-        // Release before debounce window
+        // Release before debounce window (15ms)
         release(&mut levels, 0);
-        db.update(levels, 30);
+        db.update(levels, 10);
 
         // Wait past debounce from the release
         let events = db.update(levels, 100);
