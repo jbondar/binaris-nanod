@@ -8,6 +8,7 @@ const KEY_DIRECTION: &str = "direction";
 const KEY_ZERO_ANGLE: &str = "zero_angle";
 
 /// Load motor calibration from NVS.
+/// Opens read-write to auto-create namespace if it doesn't exist (fresh flash).
 pub fn load_calibration(
     nvs_partition: EspNvsPartition<NvsDefault>,
 ) -> Result<MotorCalibration, EspError> {
@@ -32,7 +33,7 @@ pub fn store_calibration(
     nvs_partition: EspNvsPartition<NvsDefault>,
     cal: &MotorCalibration,
 ) -> Result<(), EspError> {
-    let mut nvs = EspNvs::new(nvs_partition, NVS_NAMESPACE, false)?;
+    let mut nvs = EspNvs::new(nvs_partition, NVS_NAMESPACE, true)?;
 
     let dir_val: u8 = match cal.direction {
         Direction::Unknown => 0,

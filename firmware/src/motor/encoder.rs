@@ -59,13 +59,26 @@ impl<'a> Mt6701Encoder<'a> {
     /// Read raw 14-bit angle value.
     fn read_raw(&mut self) -> Result<u16, EspError> {
         use embedded_hal::spi::SpiDevice;
-        let mut buf = [0u8; 2];
+        let mut buf = [0xFFu8; 3]; // Send 0xFF to clock data in (24 bits for MT6701)
         self.spi
             .transfer_in_place(&mut buf)
             .map_err(|_| EspError::from_infallible::<{ esp_idf_sys::ESP_FAIL }>())?;
 
-        // MT6701 SSI: 14-bit angle in upper bits
+        // MT6701 SSI: first 14 bits are the angle value (MSB first)
         let raw = ((buf[0] as u16) << 6) | ((buf[1] as u16) >> 2);
+
+        // Debug: log raw bytes periodically
+        static mut DBG_COUNT: u32 = 0;
+        unsafe {
+            DBG_COUNT += 1;
+            if DBG_COUNT % 5000 == 0 {
+                log::info!(
+                    "ENC raw bytes: [{:#04X}, {:#04X}, {:#04X}] → raw14={}",
+                    buf[0], buf[1], buf[2], raw & 0x3FFF
+                );
+            }
+        }
+
         Ok(raw & 0x3FFF)
     }
 
