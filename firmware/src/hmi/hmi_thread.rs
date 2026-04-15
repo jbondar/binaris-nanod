@@ -127,9 +127,9 @@ fn hmi_task_inner(ctx: HmiContext) -> Result<(), Box<dyn std::error::Error>> {
             last_led_show_ms = now_ms;
 
             if led_config.enabled {
-                // Ring: map knob position to LED index, apply halves pointer
-                let led_index =
-                    ring::position_to_led_index(latest_angle.current_pos, 0, 255);
+                // Ring: map knob position to LED index (inverted to match rotation direction)
+                let led_index = ring::RING_LED_COUNT - 1
+                    - ring::position_to_led_index(latest_angle.current_pos, 0, 255);
                 let offset = ring::orientation_to_offset(orientation);
 
                 // Apply brightness to colors

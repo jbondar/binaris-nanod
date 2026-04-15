@@ -329,14 +329,23 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
             let duty = foc.compute_torque(output.pid_error);
             driver.set_pwm(duty)?;
         } else {
-            // Bounds settling — simplified for now, just break immediately
-            // Full settle loop can cause lockups during initial bringup
-            let settle_angle = encoder.read_angle()?;
-            let settle_now = unsafe { esp_timer_get_time() } as u64;
-            foc.update_sensor(settle_angle, settle_now);
-            let (error, _) = haptic.bounds_settle_error(foc.shaft_angle, foc.shaft_velocity);
-            let duty = foc.compute_torque(haptic.pid.call(error, settle_now));
-            driver.set_pwm(duty)?;
+            // Bounds settling — loop until velocity drops or user drags away
+            // Matches C++ bounds_handler: keeps running FOC until settled
+            loop {
+                let settle_now = unsafe { esp_timer_get_time() } as u64;
+                let settle_angle = encoder.read_angle()?;
+                foc.update_sensor(settle_angle, settle_now);
+
+                let (error, should_break) =
+                    haptic.bounds_settle_error(foc.shaft_angle, foc.shaft_velocity);
+
+                let duty = foc.compute_torque(haptic.pid.call(error, settle_now));
+                driver.set_pwm(duty)?;
+
+                if should_break {
+                    break;
+                }
+            }
         }
 
         // Publish angle snapshot to HMI (throttled) + debug logging
