@@ -1,12 +1,17 @@
 /// PID controller with output ramp limiting.
 /// Ported from SimpleFOC's PIDController.
+///
+/// Constructor: `new(P, I, D, output_ramp, limit)`
+/// matches SimpleFOC's `PIDController(P, I, D, ramp, limit)`.
 #[derive(Debug, Clone)]
 pub struct PidController {
     pub p: f32,
     pub i: f32,
     pub d: f32,
-    pub limit: f32,
+    /// Maximum rate of output change per second.
     pub output_ramp: f32,
+    /// Maximum absolute output value. SimpleFOC default for haptics: 0.4
+    pub limit: f32,
 
     integral: f32,
     prev_error: f32,
@@ -15,13 +20,15 @@ pub struct PidController {
 }
 
 impl PidController {
-    pub fn new(p: f32, i: f32, d: f32, limit: f32, output_ramp: f32) -> Self {
+    /// Create PID controller matching SimpleFOC's parameter order:
+    /// `PIDController(P, I, D, ramp, limit)`
+    pub fn new(p: f32, i: f32, d: f32, output_ramp: f32, limit: f32) -> Self {
         Self {
             p,
             i,
             d,
-            limit,
             output_ramp,
+            limit,
             integral: 0.0,
             prev_error: 0.0,
             prev_output: 0.0,
@@ -41,7 +48,7 @@ impl PidController {
         // Proportional
         let p_term = self.p * error;
 
-        // Integral
+        // Integral (trapezoidal)
         self.integral += self.i * dt * 0.5 * (error + self.prev_error);
         self.integral = clamp(self.integral, -self.limit, self.limit);
 
@@ -92,23 +99,26 @@ fn clamp(v: f32, min: f32, max: f32) -> f32 {
 mod tests {
     use super::*;
 
+    // All tests use new(P, I, D, ramp, limit) matching SimpleFOC order
+
     #[test]
     fn test_proportional_only() {
-        let mut pid = PidController::new(2.0, 0.0, 0.0, 100.0, 0.0);
+        //                              P    I    D    ramp   limit
+        let mut pid = PidController::new(2.0, 0.0, 0.0, 0.0, 100.0);
         let out = pid.call(5.0, 1000);
         assert!((out - 10.0).abs() < 0.01, "P=2 * error=5 should be 10, got {out}");
     }
 
     #[test]
     fn test_output_clamped_to_limit() {
-        let mut pid = PidController::new(100.0, 0.0, 0.0, 10.0, 0.0);
+        let mut pid = PidController::new(100.0, 0.0, 0.0, 0.0, 10.0);
         let out = pid.call(5.0, 1000);
         assert!((out - 10.0).abs() < 0.01, "should be clamped to limit=10, got {out}");
     }
 
     #[test]
     fn test_output_ramp_limits_change() {
-        let mut pid = PidController::new(100.0, 0.0, 0.0, 10000.0, 1000.0);
+        let mut pid = PidController::new(100.0, 0.0, 0.0, 1000.0, 10000.0);
         // First call establishes baseline
         let out1 = pid.call(1.0, 0);
         // Second call 1ms later — ramp should limit change
@@ -127,7 +137,7 @@ mod tests {
 
     #[test]
     fn test_derivative_responds_to_change() {
-        let mut pid = PidController::new(0.0, 0.0, 1.0, 10000.0, 0.0);
+        let mut pid = PidController::new(0.0, 0.0, 1.0, 0.0, 10000.0);
         pid.call(0.0, 0);
         let out = pid.call(10.0, 1000); // 10 error change in 1ms
         // D=1.0 * (10-0)/0.001 = 10000
@@ -136,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_negative_error() {
-        let mut pid = PidController::new(2.0, 0.0, 0.0, 100.0, 0.0);
+        let mut pid = PidController::new(2.0, 0.0, 0.0, 0.0, 100.0);
         let out = pid.call(-5.0, 1000);
         assert!((out + 10.0).abs() < 0.01, "P=2 * error=-5 should be -10, got {out}");
     }
@@ -144,7 +154,7 @@ mod tests {
     #[test]
     fn test_integral_accumulates_over_time() {
         // P=0, I=10, D=0 — output should grow with sustained error
-        let mut pid = PidController::new(0.0, 10.0, 0.0, 1000.0, 0.0);
+        let mut pid = PidController::new(0.0, 10.0, 0.0, 0.0, 1000.0);
         let mut out = 0.0;
         for i in 0..100u64 {
             out = pid.call(1.0, i * 1000); // 1ms steps, constant error=1
@@ -155,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_integral_clamped_to_limit() {
-        let mut pid = PidController::new(0.0, 1000.0, 0.0, 5.0, 0.0);
+        let mut pid = PidController::new(0.0, 1000.0, 0.0, 0.0, 5.0);
         for i in 0..1000u64 {
             pid.call(100.0, i * 1000);
         }
@@ -168,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_integral_recovers_on_error_reversal() {
-        let mut pid = PidController::new(0.0, 10.0, 0.0, 100.0, 0.0);
+        let mut pid = PidController::new(0.0, 10.0, 0.0, 0.0, 100.0);
         // Wind up positive
         for i in 0..50u64 {
             pid.call(1.0, i * 1000);
@@ -187,7 +197,7 @@ mod tests {
 
     #[test]
     fn test_reset_clears_state() {
-        let mut pid = PidController::new(5.0, 1.0, 0.5, 100.0, 0.0);
+        let mut pid = PidController::new(5.0, 1.0, 0.5, 0.0, 100.0);
         for i in 0..50u64 {
             pid.call(10.0, i * 1000);
         }

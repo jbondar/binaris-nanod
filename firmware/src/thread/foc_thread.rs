@@ -248,14 +248,15 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
 
     // Load a default detent profile so the knob has haptics on startup
     use crate::haptic::profile::{DetentProfile, HapticMode};
+    // Match C++ Profile 2 (Progressive Force) — wider detents, easier to debug
     let default_profile = DetentProfile {
         mode: HapticMode::Regular,
         start_pos: 0,
-        end_pos: 255,
-        detent_count: 60,
+        end_pos: 120,
+        detent_count: 20,
         vernier: 1,
         kx_force: false,
-        output_ramp: 5000.0,
+        output_ramp: 0.0, // C++ default: no ramp limiting (instant PID response)
         detent_strength: 3.0,
     };
     haptic.state.load_profile(default_profile, None);
@@ -361,19 +362,22 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
             });
             let _ = ctx.display_tx.try_send(snap);
 
-            // Debug: log FOC state every ~2 seconds
+            // Debug: log FOC state every ~200ms for tuning
             static mut DBG_LAST: u64 = 0;
-            let dbg_interval = 2_000_000; // 2 seconds
+            let dbg_interval = 200_000; // 200ms
             unsafe {
                 if now_us.wrapping_sub(DBG_LAST) >= dbg_interval {
                     DBG_LAST = now_us;
                     log::info!(
-                        "FOC: angle={:.3} vel={:.1} pos={} attract={:.3} err={:.3}",
+                        "FOC: a={:.3} v={:.1} p={} at={:.3} pid={:.4} P={:.1} lim={}{}",
                         foc.shaft_angle,
                         foc.shaft_velocity,
                         haptic.state.current_pos,
                         haptic.state.attract_angle,
                         output.pid_error,
+                        haptic.pid.p,
+                        if haptic.state.at_limit { "L" } else { "" },
+                        if haptic.state.was_at_limit { "W" } else { "" },
                     );
                 }
             }

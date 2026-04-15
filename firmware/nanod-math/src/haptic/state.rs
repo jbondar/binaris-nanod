@@ -99,7 +99,10 @@ impl HapticController {
     pub fn new() -> Self {
         Self {
             state: HapticState::new(),
+            // Matches C++: PIDController(P=5.0, I=0.0, D=0.004, ramp=10000, limit=0.4)
+            // P gets overwritten by correct_pid() every loop iteration
             pid: PidController::new(5.0, 0.0, 0.004, 10000.0, 0.4),
+            //                       P    I    D      ramp     limit
             sensor_direction: Direction::Ccw, // production PCB default
         }
     }
