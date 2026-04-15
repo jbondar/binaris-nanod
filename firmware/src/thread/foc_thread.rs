@@ -1,8 +1,7 @@
 use core::f32::consts::PI;
 
-use esp_idf_hal::gpio::{AnyInputPin, PinDriver};
+use esp_idf_hal::gpio::PinDriver;
 use esp_idf_hal::peripherals::Peripherals;
-use esp_idf_hal::spi::{SpiDriver, SpiDriverConfig};
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvsPartition};
 use esp_idf_sys::*;
 
@@ -183,21 +182,13 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
     let peripherals = unsafe { Peripherals::steal() };
     let nvs_partition = EspDefaultNvsPartition::take()?;
 
-    // --- SPI bus for encoder ---
-    // MT6701 SSI: CLK=18, sensor DO=21 → ESP32 MISO. No MOSI needed.
-    // SpiDriver requires an sdo (MOSI) pin — use gpio9 (I2S, unused for now)
-    // as a dummy since SSI is read-only.
-    let spi_driver = SpiDriver::new(
-        peripherals.spi2,
-        peripherals.pins.gpio18, // SCLK
-        peripherals.pins.gpio9,  // SDO (MOSI) — dummy, not connected to sensor
-        Some(peripherals.pins.gpio21), // SDI (MISO) — MT6701 DO pin
-        &SpiDriverConfig::new(),
-    )?;
-
+    // --- Encoder (direct SPI, polling mode for minimum latency) ---
     let mut encoder = Mt6701Encoder::new(
-        &spi_driver,
-        peripherals.pins.gpio17.into(), // CS
+        esp_idf_sys::spi_host_device_t_SPI2_HOST,
+        pins::MAG_CS,   // CS = gpio17
+        pins::MAG_CLK,  // SCLK = gpio18
+        pins::MAG_DO,   // MISO = gpio21 (sensor DO)
+        -1,             // MOSI not used (SSI read-only)
     )?;
 
     // --- Motor driver (MCPWM) ---
@@ -282,6 +273,8 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
     log::info!("FOC thread initialized, entering control loop");
 
     let mut last_publish_us: u64 = 0;
+    let mut loop_count: u32 = 0;
+    let mut rate_measure_us: u64 = 0;
 
     // --- Main control loop ---
     loop {
@@ -349,38 +342,35 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
             }
         }
 
-        // Publish angle snapshot to HMI (throttled) + debug logging
+        // Publish angle snapshot to HMI + display (throttled, non-blocking)
         if now_us.wrapping_sub(last_publish_us) >= ANGLE_PUBLISH_INTERVAL_US {
             last_publish_us = now_us;
-            let snap = AngleSnapshot {
+            let _ = ctx.angle_tx.try_send(AngleSnapshot {
                 shaft_angle: foc.shaft_angle,
                 current_pos: haptic.state.current_pos as u16,
-            };
-            let _ = ctx.angle_tx.try_send(AngleSnapshot {
-                shaft_angle: snap.shaft_angle,
-                current_pos: snap.current_pos,
             });
-            let _ = ctx.display_tx.try_send(snap);
+            let _ = ctx.display_tx.try_send(AngleSnapshot {
+                shaft_angle: foc.shaft_angle,
+                current_pos: haptic.state.current_pos as u16,
+            });
+        }
 
-            // Debug: log FOC state every ~200ms for tuning
-            static mut DBG_LAST: u64 = 0;
-            let dbg_interval = 200_000; // 200ms
+        // Measure loop rate — publish via channel, never log from hot loop
+        loop_count += 1;
+        if now_us.wrapping_sub(rate_measure_us) >= 5_000_000 {
+            let rate = loop_count as f32 / 5.0;
+            // Send rate to COM thread for logging (non-blocking)
+            // We log from here ONLY because there's no other way to see the rate.
+            // TODO: remove this once rate is confirmed >5kHz
             unsafe {
-                if now_us.wrapping_sub(DBG_LAST) >= dbg_interval {
-                    DBG_LAST = now_us;
-                    log::info!(
-                        "FOC: a={:.3} v={:.1} p={} at={:.3} pid={:.4} P={:.1} lim={}{}",
-                        foc.shaft_angle,
-                        foc.shaft_velocity,
-                        haptic.state.current_pos,
-                        haptic.state.attract_angle,
-                        output.pid_error,
-                        haptic.pid.p,
-                        if haptic.state.at_limit { "L" } else { "" },
-                        if haptic.state.was_at_limit { "W" } else { "" },
-                    );
+                static mut LOGGED: bool = false;
+                if !LOGGED || rate < 1000.0 {
+                    log::info!("FOC loop: {:.0} Hz", rate);
+                    LOGGED = true;
                 }
             }
+            loop_count = 0;
+            rate_measure_us = now_us;
         }
 
         // No delay — FOC runs at max speed for tight motor control.

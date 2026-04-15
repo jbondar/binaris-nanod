@@ -1,35 +1,55 @@
 use core::f32::consts::PI;
 
-use esp_idf_hal::gpio::AnyOutputPin;
-use esp_idf_hal::spi::{self, SpiDeviceDriver, SpiConfig};
-use esp_idf_hal::units::Hertz;
-use esp_idf_sys::EspError;
+use esp_idf_sys::*;
 
 const TWO_PI: f32 = 2.0 * PI;
 const MT6701_RESOLUTION: f32 = 16384.0; // 14-bit
 
 /// MT6701 magnetic angle sensor via SSI (SPI mode 3).
-pub struct Mt6701Encoder<'a> {
-    spi: SpiDeviceDriver<'a, &'a spi::SpiDriver<'a>>,
+///
+/// Uses low-level `spi_device_polling_transmit` for minimum latency
+/// in the FOC control loop (vs the HAL's interrupt-based driver).
+pub struct Mt6701Encoder {
+    spi_device: spi_device_handle_t,
     prev_raw: u16,
     full_rotations: i32,
     angle_offset: f32,
 }
 
-impl<'a> Mt6701Encoder<'a> {
-    /// Create a new MT6701 encoder on the given SPI bus.
+impl Mt6701Encoder {
+    /// Initialize SPI device for encoder. Uses polling mode for fast reads.
     pub fn new(
-        spi_driver: &'a spi::SpiDriver<'a>,
-        cs_pin: AnyOutputPin<'a>,
+        host: spi_host_device_t,
+        cs_pin: i32,
+        sclk_pin: i32,
+        miso_pin: i32,
+        mosi_pin: i32,
     ) -> Result<Self, EspError> {
-        let config = SpiConfig::new()
-            .baudrate(Hertz(1_000_000))
-            .data_mode(embedded_hal::spi::MODE_3);
+        // Configure SPI bus — use zeroed struct and set fields individually
+        let mut bus_config: spi_bus_config_t = unsafe { core::mem::zeroed() };
+        bus_config.__bindgen_anon_1.mosi_io_num = mosi_pin;
+        bus_config.__bindgen_anon_2.miso_io_num = miso_pin;
+        bus_config.sclk_io_num = sclk_pin;
+        bus_config.__bindgen_anon_3.quadwp_io_num = -1;
+        bus_config.__bindgen_anon_4.quadhd_io_num = -1;
+        bus_config.max_transfer_sz = 32;
+        bus_config.flags = SPICOMMON_BUSFLAG_MASTER;
 
-        let spi = SpiDeviceDriver::new(spi_driver, Some(cs_pin), &config)?;
+        esp!(unsafe { spi_bus_initialize(host, &bus_config, 0) })?; // 0 = no DMA
+
+        // Configure SPI device — polling mode, 10MHz, SPI mode 3
+        let mut dev_config: spi_device_interface_config_t = unsafe { core::mem::zeroed() };
+        dev_config.clock_speed_hz = 10_000_000;
+        dev_config.mode = 3; // CPOL=1, CPHA=1
+        dev_config.spics_io_num = cs_pin;
+        dev_config.queue_size = 1;
+        dev_config.flags = SPI_DEVICE_HALFDUPLEX;
+
+        let mut spi_device: spi_device_handle_t = core::ptr::null_mut();
+        esp!(unsafe { spi_bus_add_device(host, &dev_config, &mut spi_device) })?;
 
         Ok(Self {
-            spi,
+            spi_device,
             prev_raw: 0,
             full_rotations: 0,
             angle_offset: 0.0,
@@ -37,6 +57,7 @@ impl<'a> Mt6701Encoder<'a> {
     }
 
     /// Read the current angle in radians (continuous, multi-turn).
+    #[inline]
     pub fn read_angle(&mut self) -> Result<f32, EspError> {
         let raw = self.read_raw()?;
 
@@ -56,17 +77,19 @@ impl<'a> Mt6701Encoder<'a> {
         Ok(angle)
     }
 
-    /// Read raw 14-bit angle value.
+    /// Read raw 14-bit angle value using polling SPI (no ISR overhead).
+    #[inline]
     fn read_raw(&mut self) -> Result<u16, EspError> {
-        use embedded_hal::spi::SpiDevice;
-        let mut buf = [0xFFu8; 3]; // Send 0xFF to clock data in (24 bits for MT6701)
-        self.spi
-            .transfer_in_place(&mut buf)
-            .map_err(|_| EspError::from_infallible::<{ esp_idf_sys::ESP_FAIL }>())?;
+        let mut rx_buf = [0u8; 4]; // 4-byte aligned buffer
+        let mut trans: spi_transaction_t = unsafe { core::mem::zeroed() };
+        trans.rxlength = 24; // Read 24 bits (3 bytes)
+        trans.length = 0; // Don't send anything
+        trans.__bindgen_anon_2.rx_buffer = rx_buf.as_mut_ptr() as *mut _;
+
+        esp!(unsafe { spi_device_polling_transmit(self.spi_device, &mut trans) })?;
 
         // MT6701 SSI: first 14 bits are the angle value (MSB first)
-        let raw = ((buf[0] as u16) << 6) | ((buf[1] as u16) >> 2);
-
+        let raw = ((rx_buf[0] as u16) << 6) | ((rx_buf[1] as u16) >> 2);
         Ok(raw & 0x3FFF)
     }
 
@@ -83,5 +106,13 @@ impl<'a> Mt6701Encoder<'a> {
     pub fn get_raw_angle(&mut self) -> Result<f32, EspError> {
         let raw = self.read_raw()?;
         Ok(raw as f32 / MT6701_RESOLUTION * TWO_PI)
+    }
+}
+
+impl Drop for Mt6701Encoder {
+    fn drop(&mut self) {
+        unsafe {
+            spi_bus_remove_device(self.spi_device);
+        }
     }
 }

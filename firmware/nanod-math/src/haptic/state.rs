@@ -37,7 +37,7 @@ impl HapticState {
             last_attract_angle: 0.0,
             detent_strength_unit: 3.0,
             endstop_strength_unit: 1.0, // weaker than normal — used when clipping (matches C++)
-            attract_hysteresis: 0.25,
+            attract_hysteresis: 0.25, // matches C++ SimpleFOC
             at_limit: false,
             was_at_limit: false,
         };
