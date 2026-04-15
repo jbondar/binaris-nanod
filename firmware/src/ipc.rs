@@ -44,6 +44,8 @@ pub struct FocContext {
     pub cmd_rx: Receiver<FocCommand>,
     /// Publish angle snapshots to HMI.
     pub angle_tx: SyncSender<AngleSnapshot>,
+    /// Publish angle snapshots to display thread.
+    pub display_tx: SyncSender<AngleSnapshot>,
 }
 
 /// Channel endpoints for the COM thread.

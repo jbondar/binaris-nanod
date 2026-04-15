@@ -183,12 +183,12 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
 
     // --- SPI bus for encoder ---
     // MT6701 SSI: CLK=18, sensor DO=21 → ESP32 MISO. No MOSI needed.
-    // SpiDriver requires an sdo (MOSI) pin — use gpio4 (display MOSI, unused)
+    // SpiDriver requires an sdo (MOSI) pin — use gpio9 (I2S, unused for now)
     // as a dummy since SSI is read-only.
     let spi_driver = SpiDriver::new(
         peripherals.spi2,
         peripherals.pins.gpio18, // SCLK
-        peripherals.pins.gpio4,  // SDO (MOSI) — dummy, not connected to sensor
+        peripherals.pins.gpio9,  // SDO (MOSI) — dummy, not connected to sensor
         Some(peripherals.pins.gpio21), // SDI (MISO) — MT6701 DO pin
         &SpiDriverConfig::new(),
     )?;
@@ -341,10 +341,15 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
         // Publish angle snapshot to HMI (throttled) + debug logging
         if now_us.wrapping_sub(last_publish_us) >= ANGLE_PUBLISH_INTERVAL_US {
             last_publish_us = now_us;
-            let _ = ctx.angle_tx.try_send(AngleSnapshot {
+            let snap = AngleSnapshot {
                 shaft_angle: foc.shaft_angle,
                 current_pos: haptic.state.current_pos as u16,
+            };
+            let _ = ctx.angle_tx.try_send(AngleSnapshot {
+                shaft_angle: snap.shaft_angle,
+                current_pos: snap.current_pos,
             });
+            let _ = ctx.display_tx.try_send(snap);
 
             // Debug: log FOC state every ~2 seconds
             static mut DBG_LAST: u64 = 0;
