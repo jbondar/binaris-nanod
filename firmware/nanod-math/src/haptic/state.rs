@@ -36,7 +36,7 @@ impl HapticState {
             attract_angle: 0.0,
             last_attract_angle: 0.0,
             detent_strength_unit: 3.0,
-            endstop_strength_unit: 5.0,
+            endstop_strength_unit: 1.0, // weaker than normal — used when clipping (matches C++)
             attract_hysteresis: 0.25,
             at_limit: false,
             was_at_limit: false,
@@ -72,6 +72,7 @@ impl HapticState {
         }
 
         self.last_pos = self.current_pos;
+        self.detent_strength_unit = profile.detent_strength;
         self.detent_profile = profile;
     }
 }

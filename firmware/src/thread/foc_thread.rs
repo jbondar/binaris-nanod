@@ -121,11 +121,13 @@ fn run_calibration(
         delta
     );
 
-    // Determine direction: if positive electrical angle caused positive shaft movement → CW
+    // Determine direction: on the NanoD production PCB, positive electrical angle
+    // causing positive shaft movement means the sensor reads CCW.
+    // This is inverted from the naive assumption because of the PCB winding direction.
     let direction = if delta > 0.0 {
-        Direction::Cw
-    } else {
         Direction::Ccw
+    } else {
+        Direction::Cw
     };
 
     let sensor_dir: i8 = match direction {
@@ -217,10 +219,9 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
     // --- Load or run calibration ---
     let cal = calibration::load_calibration(nvs_partition.clone())?;
     if cal.direction != Direction::Unknown {
-        // HACK: invert direction to test if calibration detected wrong polarity
         foc.sensor_direction = match cal.direction {
-            Direction::Cw => -1,  // inverted
-            Direction::Ccw => 1,  // inverted
+            Direction::Cw => 1,
+            Direction::Ccw => -1,
             Direction::Unknown => 1,
         };
         foc.zero_electrical_angle = cal.zero_angle;
@@ -250,12 +251,12 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
     let default_profile = DetentProfile {
         mode: HapticMode::Regular,
         start_pos: 0,
-        end_pos: 20,
-        detent_count: 20,
+        end_pos: 255,
+        detent_count: 60,
         vernier: 1,
         kx_force: false,
         output_ramp: 5000.0,
-        detent_strength: 2.0,
+        detent_strength: 3.0,
     };
     haptic.state.load_profile(default_profile, None);
     log::info!("FOC: loaded default haptic profile (60 detents, 0-255)");
