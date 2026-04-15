@@ -280,7 +280,8 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
     loop {
         let now_us = unsafe { esp_timer_get_time() } as u64;
 
-        // Check for incoming commands (non-blocking)
+        // Check for incoming commands (every 100 loops to reduce overhead)
+        if loop_count % 100 == 0 {
         if let Ok(cmd) = ctx.cmd_rx.try_recv() {
             match cmd {
                 FocCommand::UpdateHaptic(profile) => {
@@ -313,11 +314,14 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
                 }
             }
         }
+        } // end command check throttle
 
+        let t0 = unsafe { esp_timer_get_time() } as u64;
         let angle = encoder.read_angle()?;
+        let t1 = unsafe { esp_timer_get_time() } as u64;
         foc.update_sensor(angle, now_us);
-
         let output = haptic.haptic_loop(foc.shaft_angle, foc.shaft_velocity, now_us);
+        let t2 = unsafe { esp_timer_get_time() } as u64;
 
         if output.run_foc {
             let duty = foc.compute_torque(output.pid_error);
@@ -355,20 +359,19 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
             });
         }
 
-        // Measure loop rate — publish via channel, never log from hot loop
+        // Periodic status + anomaly detection
         loop_count += 1;
-        if now_us.wrapping_sub(rate_measure_us) >= 5_000_000 {
-            let rate = loop_count as f32 / 5.0;
-            // Send rate to COM thread for logging (non-blocking)
-            // We log from here ONLY because there's no other way to see the rate.
-            // TODO: remove this once rate is confirmed >5kHz
-            unsafe {
-                static mut LOGGED: bool = false;
-                if !LOGGED || rate < 1000.0 {
-                    log::info!("FOC loop: {:.0} Hz", rate);
-                    LOGGED = true;
-                }
-            }
+        if now_us.wrapping_sub(rate_measure_us) >= 2_000_000 {
+            let rate = loop_count as f32 / 2.0;
+            log::info!(
+                "FOC: {:.0}Hz p={} at={:.3} err={:.4} lim={}{}",
+                rate,
+                haptic.state.current_pos,
+                haptic.state.attract_angle,
+                output.pid_error,
+                if haptic.state.at_limit { "L" } else { "" },
+                if haptic.state.was_at_limit { "W" } else { "" },
+            );
             loop_count = 0;
             rate_measure_us = now_us;
         }
