@@ -17,8 +17,12 @@ embedded-hal = "1.0"
 [build-dependencies]
 embuild = "0.33"
 
+# NanoD motor control C++ component (SimpleFOC + haptic)
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components/nanod_motor"]
+bindings_header = "nanod_motor_bindings.h"
+
 # Phase 3B: uncomment to add TinyUSB for composite USB (CDC+HID+MIDI)
-# Requires switching sdkconfig from ESP_CONSOLE_USB_CDC to TinyUSB — test with device
 # [[package.metadata.esp-idf-sys.extra_components]]
 # remote_component = { name = "espressif/esp_tinyusb", version = "^1.2" }
 # bindings_header = "tinyusb_bindings.h"
