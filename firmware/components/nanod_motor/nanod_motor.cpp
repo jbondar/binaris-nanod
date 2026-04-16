@@ -150,3 +150,11 @@ void nanod_motor_offset_detent(void) {
 }
 
 } // extern "C"
+
+// Haptic event callback — called by the C++ haptic code
+void HapticInterface::UserHapticEventCallback(HapticEvt event, float currentAngle, uint16_t currentPos) {
+    // TODO: could forward events to Rust via a channel
+    (void)event;
+    (void)currentAngle;
+    (void)currentPos;
+}

@@ -64,6 +64,36 @@ inline void delayMicroseconds(unsigned long us) {
     while (esp_timer_get_time() < end) {}
 }
 
+// Arduino LEDC PWM shims (ESP-IDF native LEDC driver)
+#include "driver/ledc.h"
+
+inline double ledcSetup(uint8_t channel, double freq, uint8_t resolution) {
+    ledc_timer_config_t timer_conf = {};
+    timer_conf.speed_mode = LEDC_LOW_SPEED_MODE;
+    timer_conf.duty_resolution = (ledc_timer_bit_t)resolution;
+    timer_conf.timer_num = (ledc_timer_t)(channel / 2); // 2 channels per timer
+    timer_conf.freq_hz = (uint32_t)freq;
+    timer_conf.clk_cfg = LEDC_AUTO_CLK;
+    ledc_timer_config(&timer_conf);
+    return freq;
+}
+
+inline void ledcAttachPin(int pin, uint8_t channel) {
+    ledc_channel_config_t ch_conf = {};
+    ch_conf.gpio_num = pin;
+    ch_conf.speed_mode = LEDC_LOW_SPEED_MODE;
+    ch_conf.channel = (ledc_channel_t)channel;
+    ch_conf.timer_sel = (ledc_timer_t)(channel / 2);
+    ch_conf.duty = 0;
+    ch_conf.hpoint = 0;
+    ledc_channel_config(&ch_conf);
+}
+
+inline void ledcWrite(uint8_t channel, uint32_t duty) {
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)channel, duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)channel);
+}
+
 // Minimal Print class stub (SimpleFOC debug uses it but we disable debug)
 #define SIMPLEFOC_DISABLE_DEBUG
 

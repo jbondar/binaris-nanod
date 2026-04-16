@@ -5,6 +5,7 @@ idf_component_register(
         "simplefoc/BLDCMotor.cpp"
         "simplefoc/FOCMotor.cpp"
         "simplefoc/Sensor.cpp"
+        "simplefoc/CurrentSense.cpp"
         "simplefoc/BLDCDriver3PWM.cpp"
         "simplefoc/foc_utils.cpp"
         "simplefoc/time_utils.cpp"
@@ -25,6 +26,9 @@ idf_component_register(
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -DSIMPLEFOC_DISABLE_DEBUG
     -DESP32
+    -DARDUINO_ARCH_ESP32
+    -DSIMPLEFOC_ESP32_USELEDC
+    -DESP_H
     -Wno-unused-variable
     -Wno-sign-compare
     -Wno-unused-function
