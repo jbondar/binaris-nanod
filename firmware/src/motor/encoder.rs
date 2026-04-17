@@ -171,6 +171,12 @@ impl Mt6701Encoder {
         Ok(raw & 0x3FFF)
     }
 
+    /// Get the mechanical angle in 0-2PI range (single rotation, no multi-turn).
+    #[inline(always)]
+    pub fn get_mechanical_angle(&self) -> f32 {
+        self.prev_raw as f32 / MT6701_RESOLUTION * TWO_PI
+    }
+
     /// Set the current position as the zero reference.
     pub fn set_zero(&mut self) -> Result<(), EspError> {
         let raw = self.read_raw_driver()?;

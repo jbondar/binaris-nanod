@@ -11,7 +11,7 @@
 // Global instances (single motor system)
 static BLDCMotor* motor = nullptr;
 static BLDCDriver3PWM* driver = nullptr;
-static ExternalSensor* sensor = nullptr;
+static Mt6701Sensor* sensor = nullptr;
 static HapticInterface* haptic = nullptr;
 static PIDController* haptic_pid = nullptr;
 
@@ -20,6 +20,9 @@ extern "C" {
 int nanod_motor_init(
     const int pwm_pins[3],
     const int enable_pins[3],
+    int encoder_cs,
+    int encoder_sclk,
+    int encoder_miso,
     float voltage_supply,
     float voltage_limit,
     float phase_resistance,
@@ -32,9 +35,18 @@ int nanod_motor_init(
     driver->voltage_limit = voltage_limit;
     if (driver->init() == 0) return -1;
 
-    // Create sensor
-    sensor = new ExternalSensor();
+    // Create sensor with direct SPI access (needed for calibration)
+    sensor = new Mt6701Sensor();
+    if (!sensor->initSPI(encoder_cs, encoder_sclk, encoder_miso)) {
+        printf("ERROR: Mt6701Sensor SPI init failed! cs=%d sclk=%d miso=%d\n",
+               encoder_cs, encoder_sclk, encoder_miso);
+        return -2;
+    }
     sensor->init();
+
+    // Verify sensor reads something
+    float test_angle = sensor->getSensorAngle();
+    printf("Mt6701 sensor test read: %.4f rad\n", test_angle);
 
     // Create motor
     motor = new BLDCMotor(7, phase_resistance); // 7 pole pairs
@@ -47,8 +59,11 @@ int nanod_motor_init(
     motor->foc_modulation = FOCModulationType::SpaceVectorPWM;
     motor->init();
 
-    // Create haptic PID
+    // Create haptic PID — matches original C++ exactly
     haptic_pid = new PIDController(5.0f, 0.0f, 0.004f, 10000.0f, 0.4f);
+
+    // Set velocity LPF — matches original foc_thread.cpp
+    motor->LPF_velocity.Tf = 0.01f;
 
     // Create haptic interface
     haptic = new HapticInterface(motor, haptic_pid);
@@ -59,7 +74,14 @@ int nanod_motor_init(
 
 int nanod_motor_calibrate(void) {
     if (!motor) return -1;
-    return motor->initFOC();
+    printf("Starting initFOC...\n");
+    printf("  sensor_direction = %d\n", (int)motor->sensor_direction);
+    printf("  zero_electric_angle = %.4f\n", motor->zero_electric_angle);
+    int result = motor->initFOC();
+    printf("initFOC result = %d\n", result);
+    printf("  sensor_direction = %d\n", (int)motor->sensor_direction);
+    printf("  zero_electric_angle = %.4f\n", motor->zero_electric_angle);
+    return result;
 }
 
 void nanod_motor_set_calibration(int direction, float zero_electric_angle) {
@@ -76,8 +98,9 @@ void nanod_motor_get_calibration(int* direction, float* zero_electric_angle) {
 }
 
 void nanod_motor_set_encoder_angle(float angle) {
-    if (!sensor) return;
-    sensor->setAngle(angle);
+    // No-op — sensor now reads SPI directly.
+    // Kept for API compatibility.
+    (void)angle;
 }
 
 void nanod_motor_loop(void) {

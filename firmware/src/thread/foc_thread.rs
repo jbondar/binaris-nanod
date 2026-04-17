@@ -4,7 +4,6 @@ use esp_idf_sys::*;
 
 use crate::ipc::{AngleSnapshot, FocCommand, FocContext};
 use crate::motor::calibration;
-use crate::motor::encoder::Mt6701Encoder;
 use crate::haptic::profile::Direction;
 use crate::pins;
 
@@ -48,16 +47,7 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
     let _peripherals = unsafe { Peripherals::steal() };
     let nvs_partition = EspDefaultNvsPartition::take()?;
 
-    // --- Encoder (Rust SPI, polling mode) ---
-    let mut encoder = Mt6701Encoder::new(
-        spi_host_device_t_SPI2_HOST,
-        pins::MAG_CS,
-        pins::MAG_CLK,
-        pins::MAG_DO,
-        -1, // no MOSI
-    )?;
-
-    // --- Initialize C++ SimpleFOC motor ---
+    // --- Initialize C++ SimpleFOC motor (owns encoder + driver) ---
     let pwm_pins = [pins::MOTOR_IN_U, pins::MOTOR_IN_V, pins::MOTOR_IN_W];
     let enable_pins = [pins::MOTOR_EN_U, pins::MOTOR_EN_V, pins::MOTOR_EN_W];
 
@@ -65,6 +55,9 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
         nanod_motor_init(
             pwm_pins.as_ptr(),
             enable_pins.as_ptr(),
+            pins::MAG_CS,    // encoder CS
+            pins::MAG_CLK,   // encoder SCLK
+            pins::MAG_DO,    // encoder MISO (sensor DO)
             5.0,   // voltage_supply
             5.0,   // voltage_limit
             5.3,   // phase_resistance
@@ -93,14 +86,9 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
         );
     } else {
         log::warn!("No calibration — running SimpleFOC auto-calibration");
-        // Feed encoder readings during calibration (SimpleFOC reads sensor internally)
-        // Need to do a first sensor update
-        let angle = encoder.read_angle()?;
-        unsafe { nanod_motor_set_encoder_angle(angle) };
-
+        // Sensor now reads SPI directly, so initFOC can work
         let result = unsafe { nanod_motor_calibrate() };
         if result != 0 {
-            // Save calibration to NVS
             let mut dir: i32 = 0;
             let mut zero: f32 = 0.0;
             unsafe { nanod_motor_get_calibration(&mut dir, &mut zero) };
@@ -114,27 +102,31 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
                 direction,
                 zero_angle: zero,
             };
-            calibration::store_calibration(nvs_partition.clone(), &cal_data)?;
+            let _ = calibration::store_calibration(nvs_partition.clone(), &cal_data);
             log::info!("Calibration complete: dir={dir}, zero={zero:.4}");
         } else {
-            log::error!("SimpleFOC calibration failed");
+            log::error!("SimpleFOC calibration failed!");
         }
     }
 
+    // Zero the angle space for haptics (matches C++ foc_thread.cpp)
+    unsafe { nanod_motor_offset_detent() };
+
     // --- Load default haptic profile ---
+    // Exact same default as C++ firmware
     unsafe {
         nanod_motor_load_profile(
             0,    // mode: REGULAR
             0,    // start_pos
-            120,  // end_pos
-            20,   // detent_count
-            1,    // vernier
+            255,  // end_pos
+            60,   // detent_count
+            5,    // vernier
             0,    // kx_force
-            0.0,  // output_ramp (0 = no ramp)
+            0.0,  // output_ramp
             3.0,  // detent_strength
         );
     }
-    log::info!("Loaded default haptic profile (20 detents, 0-120)");
+    log::info!("Loaded default haptic profile (60 detents, 0-255, vernier=5)");
 
     let mut last_publish_us: u64 = 0;
     let mut loop_count: u32 = 0;
@@ -177,9 +169,7 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
             }
         }
 
-        // Read encoder and feed to SimpleFOC
-        let angle = encoder.read_angle()?;
-        unsafe { nanod_motor_set_encoder_angle(angle) };
+        // Sensor reads SPI directly inside nanod_motor_loop()
 
         // Run SimpleFOC + haptic loop (loopFOC + find_detent + haptic_target + move)
         unsafe { nanod_motor_loop() };

@@ -15,6 +15,9 @@ extern "C" {
 int nanod_motor_init(
     const int pwm_pins[3],
     const int enable_pins[3],
+    int encoder_cs,
+    int encoder_sclk,
+    int encoder_miso,
     float voltage_supply,
     float voltage_limit,
     float phase_resistance,
