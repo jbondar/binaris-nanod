@@ -22,6 +22,11 @@ embuild = "0.33"
 component_dirs = ["components/nanod_motor"]
 bindings_header = "nanod_motor_bindings.h"
 
+# LVGL display library
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "lvgl/lvgl", version = "~9.1" }
+bindings_header = "lvgl_bindings.h"
+
 # Phase 3B: uncomment to add TinyUSB for composite USB (CDC+HID+MIDI)
 # [[package.metadata.esp-idf-sys.extra_components]]
 # remote_component = { name = "espressif/esp_tinyusb", version = "^1.2" }
