@@ -13,9 +13,9 @@ CONFIG_SPIRAM=y
 # CPU: 240MHz
 CONFIG_ESP_DEFAULT_CPU_FREQ_240=y
 
-# Watchdog — don't watch IDLE tasks (FOC loop monopolizes Core 1)
+# Watchdog — don't watch IDLE tasks (display full-frame flush blocks Core 0)
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
-CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=y
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
 CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
 
 # Main task stack size (default 3584 is too small for Rust std + channel setup)
@@ -30,3 +30,8 @@ CONFIG_SOC_MCPWM_SUPPORTED=y
 # Partition table — custom: 3MB app, 960KB SPIFFS, 24KB NVS
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="/Users/jake.bondar/repos/NanoD-Integrations/firmware/partitions.csv"
+
+# LVGL display library
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_48=y

@@ -1,9 +1,11 @@
-use nanod_math::haptic::profile::DetentProfile;
+use nanod_math::haptic::profile::{DetentProfile, HapticMode};
 use nanod_math::led::types::LedConfig;
 use nanod_math::profile::manager::ProfileManager;
 use nanod_math::protocol::command::*;
 use nanod_math::protocol::parse;
 use nanod_math::protocol::serialize;
+
+use crate::ipc::{DisplayCommand, DisplayMode};
 
 /// Handles parsed commands and produces responses.
 /// Owns the profile manager and settings state.
@@ -24,6 +26,10 @@ pub enum Action {
     UpdateSettings { brightness: u8, orientation: u8 },
     /// Trigger motor recalibration.
     Recalibrate,
+    /// Send a command to the display thread.
+    Display(DisplayCommand),
+    /// Enter binary receive mode for album art (raw bytes from stdin).
+    BinaryArtReceive(u32),
     /// Persist profiles/settings to SPIFFS.
     Save,
     /// No action needed.
@@ -192,6 +198,115 @@ impl Dispatcher {
                     actions.push(Action::Respond(json));
                 }
             }
+
+            // --- Media controller commands ---
+
+            Command::MediaMode(on) => {
+                let mode = if on { DisplayMode::Media } else { DisplayMode::Value };
+                actions.push(Action::Display(DisplayCommand::SetMode(mode)));
+                let state = if on { "on" } else { "off" };
+                let evt = serialize::message_event("info", &format!("media mode {state}"));
+                if let Ok(json) = serialize::serialize_event(&evt) {
+                    actions.push(Action::Respond(json));
+                }
+            }
+
+            Command::MediaMeta(meta) => {
+                actions.push(Action::Display(DisplayCommand::MediaMeta {
+                    title: meta.title,
+                    artist: meta.artist,
+                    duration_s: meta.duration,
+                    position_s: meta.position,
+                    playing: meta.playing,
+                }));
+            }
+
+            Command::MediaArt(art) => {
+                let decoded = decode_base64(&art.data);
+                actions.push(Action::Display(DisplayCommand::MediaArtChunk {
+                    offset: art.offset,
+                    data: decoded,
+                }));
+            }
+
+            Command::MediaArtDone => {
+                actions.push(Action::Display(DisplayCommand::MediaArtDone));
+            }
+
+            Command::MediaArtBin(size) => {
+                // Signal to COM thread to enter binary receive mode
+                actions.push(Action::BinaryArtReceive(size));
+            }
+
+            Command::MediaHaptic(mode) => {
+                let profile = match mode.as_str() {
+                    "volume" => DetentProfile {
+                        mode: HapticMode::Regular,
+                        start_pos: 0,
+                        end_pos: 100,
+                        detent_count: 20,
+                        vernier: 0,
+                        kx_force: false,
+                        output_ramp: 5000.0,
+                        detent_strength: 3.0,
+                    },
+                    "scrub" | _ => DetentProfile {
+                        mode: HapticMode::Viscose,
+                        start_pos: 0,
+                        end_pos: 255,
+                        detent_count: 0,
+                        vernier: 0,
+                        kx_force: false,
+                        output_ramp: 5000.0,
+                        detent_strength: 0.0,
+                    },
+                };
+                actions.push(Action::UpdateHaptic(profile));
+                let evt = serialize::message_event("info", &format!("media haptic: {mode}"));
+                if let Ok(json) = serialize::serialize_event(&evt) {
+                    actions.push(Action::Respond(json));
+                }
+            }
         }
     }
+}
+
+/// Decode base64-encoded data to raw bytes.
+fn decode_base64(input: &str) -> Vec<u8> {
+    fn val(c: u8) -> u8 {
+        match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => 0,
+        }
+    }
+
+    let bytes: Vec<u8> = input
+        .bytes()
+        .filter(|&b| b != b'=' && b != b'\n' && b != b'\r' && b != b' ')
+        .collect();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+
+    for chunk in bytes.chunks(4) {
+        let n = chunk.len();
+        if n < 2 {
+            break;
+        }
+        let a = val(chunk[0]);
+        let b = val(chunk[1]);
+        let c = if n > 2 { val(chunk[2]) } else { 0 };
+        let d = if n > 3 { val(chunk[3]) } else { 0 };
+
+        out.push((a << 2) | (b >> 4));
+        if n > 2 {
+            out.push((b << 4) | (c >> 2));
+        }
+        if n > 3 {
+            out.push((c << 6) | d);
+        }
+    }
+    out
 }

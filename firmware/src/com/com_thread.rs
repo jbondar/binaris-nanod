@@ -1,12 +1,12 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 
 use esp_idf_sys::*;
 use nanod_math::protocol::serialize;
 
 use super::dispatch::{Action, Dispatcher};
-use crate::ipc::ComContext;
+use crate::ipc::{ComContext, DisplayCommand};
 
-const COM_STACK_SIZE: usize = 8192;
+const COM_STACK_SIZE: usize = 32768; // Larger for base64 album art decoding
 const COM_PRIORITY: u32 = 1;
 const COM_CORE: i32 = 0;
 // FreeRTOS tick rate is 100Hz (10ms/tick). vTaskDelay takes ticks, not ms.
@@ -54,23 +54,37 @@ fn com_task_inner(ctx: ComContext) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("COM thread ready, listening for JSON commands");
 
     loop {
-        line_buf.clear();
-
-        // Non-blocking: try to read a line
+        // Read more data into the buffer.
+        // Don't clear — accumulate until we have a complete line (\n).
+        // Large JSON messages arrive in multiple USB packets; read_line
+        // may return a partial line when the USB buffer is temporarily empty.
         match reader.read_line(&mut line_buf) {
             Ok(0) => {
-                // No data / EOF — sleep and retry
-                unsafe { vTaskDelay(LOOP_DELAY_TICKS) };
+                if !line_buf.is_empty() {
+                    // Have partial data — busy-wait briefly for more USB packets
+                    unsafe { esp_rom_delay_us(100) };
+                } else {
+                    // Truly idle — normal sleep
+                    unsafe { vTaskDelay(LOOP_DELAY_TICKS) };
+                }
             }
             Ok(_) => {
-                let line = line_buf.trim();
-                if line.is_empty() {
+                // Only process when we have a complete line (ends with \n)
+                if !line_buf.ends_with('\n') {
+                    // Partial read — immediately try for more
                     continue;
                 }
 
-                log::debug!("COM rx: {}", line);
+                let line = line_buf.trim();
+                if line.is_empty() {
+                    line_buf.clear();
+                    continue;
+                }
+
+                log::debug!("COM rx: {}", &line[..line.len().min(80)]);
 
                 let actions = dispatcher.handle_line(line);
+                line_buf.clear();
                 for action in actions {
                     match action {
                         Action::Respond(json) => {
@@ -108,6 +122,32 @@ fn com_task_inner(ctx: ComContext) -> Result<(), Box<dyn std::error::Error>> {
                             log::info!("COM→FOC: recalibrate");
                             let _ = ctx.foc_tx.try_send(crate::ipc::FocCommand::Recalibrate);
                         }
+                        Action::Display(display_cmd) => {
+                            let desc = match &display_cmd {
+                                crate::ipc::DisplayCommand::SetMode(m) => format!("SetMode({:?})", m),
+                                crate::ipc::DisplayCommand::MediaMeta { title, .. } => format!("MediaMeta({})", title),
+                                crate::ipc::DisplayCommand::MediaArtChunk { offset, .. } => format!("ArtChunk@{}", offset),
+                                crate::ipc::DisplayCommand::MediaArtStart => "ArtStart".to_string(),
+                                crate::ipc::DisplayCommand::MediaArtDone => "ArtDone".to_string(),
+                            };
+                            match ctx.display_tx.try_send(display_cmd) {
+                                Ok(()) => log::info!("COM→Display: {}", desc),
+                                Err(e) => log::error!("COM→Display FAILED: {} — {}", desc, e),
+                            }
+                        }
+                        Action::BinaryArtReceive(size) => {
+                            // Tell display to hide canvas during transfer
+                            let _ = ctx.display_tx.try_send(DisplayCommand::MediaArtStart);
+                            // ACK — tell host to start sending raw bytes
+                            let _ = stdout.write_all(b"{\"ack\":\"art_bin\"}\n");
+                            let _ = stdout.flush();
+                            // Read through BufReader to keep its buffer in sync
+                            receive_binary_art(
+                                &mut reader,
+                                &ctx.display_tx,
+                                size as usize,
+                            );
+                        }
                         Action::Save => {
                             save_profiles_to_spiffs(&dispatcher);
                         }
@@ -136,6 +176,50 @@ fn com_task_inner(ctx: ComContext) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+}
+
+/// Read raw binary album art data from stdin directly into the shared ART_BUF.
+/// Bypasses channels entirely — writes to the static buffer, then signals display thread.
+fn receive_binary_art(
+    stdin: &mut impl Read,
+    display_tx: &std::sync::mpsc::SyncSender<DisplayCommand>,
+    size: usize,
+) {
+    use crate::display::display_thread::{ART_LOAD_PTR, ART_BUF_SIZE};
+
+    let buf_ptr = unsafe { ART_LOAD_PTR };
+    if buf_ptr.is_null() {
+        log::error!("ART_BUF not allocated");
+        return;
+    }
+
+    let max = size.min(ART_BUF_SIZE);
+    let mut received = 0usize;
+
+    while received < max {
+        let dest = unsafe {
+            core::slice::from_raw_parts_mut(buf_ptr.add(received), max - received)
+        };
+        match stdin.read(dest) {
+            Ok(0) => {
+                unsafe { esp_rom_delay_us(50) };
+            }
+            Ok(n) => {
+                received += n;
+            }
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::WouldBlock {
+                    log::error!("binary art read error: {e}");
+                    return;
+                }
+                unsafe { esp_rom_delay_us(50) };
+            }
+        }
+    }
+
+    // Signal display thread to refresh the canvas
+    let _ = display_tx.try_send(DisplayCommand::MediaArtDone);
+    log::info!("Binary art received: {} bytes", received);
 }
 
 fn save_profiles_to_spiffs(dispatcher: &Dispatcher) {

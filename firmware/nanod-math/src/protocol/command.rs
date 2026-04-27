@@ -24,6 +24,18 @@ pub enum Command {
     Get,
     /// Get current device settings as JSON.
     GetSettings,
+    /// Enter or exit media controller display mode.
+    MediaMode(bool),
+    /// Update media track metadata on display.
+    MediaMeta(MediaMetaPayload),
+    /// Send a chunk of album art (base64-encoded RGB565).
+    MediaArt(MediaArtPayload),
+    /// Signal that all album art chunks have been sent.
+    MediaArtDone,
+    /// Binary album art transfer — next N bytes on stdin are raw RGB565 data.
+    MediaArtBin(u32),
+    /// Switch haptic profile for media mode ("volume" or "scrub").
+    MediaHaptic(String),
 }
 
 /// Haptic profile payload sent from host.
@@ -138,6 +150,32 @@ pub struct ScreenCommand {
     pub layout: String,
     #[serde(default)]
     pub data: serde_json::Value,
+}
+
+/// Media track metadata from companion app.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MediaMetaPayload {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub artist: String,
+    #[serde(default)]
+    pub album: String,
+    #[serde(default)]
+    pub duration: u32,
+    #[serde(default)]
+    pub position: u32,
+    #[serde(default)]
+    pub playing: bool,
+}
+
+/// Album art chunk (base64-encoded RGB565 pixel data).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MediaArtPayload {
+    #[serde(default)]
+    pub offset: u32,
+    #[serde(default)]
+    pub data: String,
 }
 
 /// Outbound event from device → host.

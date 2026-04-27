@@ -92,6 +92,15 @@ impl SerialProto {
         Ok(())
     }
 
+    /// Write raw bytes directly to the serial port (binary transfer).
+    pub fn write_raw(&mut self, data: &[u8]) -> Result<()> {
+        self.port
+            .write_all(data)
+            .context("serial raw write failed")?;
+        self.port.flush().context("serial flush failed")?;
+        Ok(())
+    }
+
     /// Collect all responses within a time window.
     pub fn collect_responses(&mut self, duration: Duration) -> Result<Vec<serde_json::Value>> {
         let start = Instant::now();

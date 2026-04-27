@@ -1,5 +1,6 @@
 pub mod backup;
 pub mod flash;
+pub mod media;
 pub mod monitor;
 pub mod recover;
 pub mod restore;

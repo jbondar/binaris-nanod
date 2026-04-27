@@ -63,6 +63,48 @@ pub fn parse_command(json: &str) -> Result<Command, ParseError> {
         return Ok(Command::GetSettings);
     }
 
+    // --- Media controller commands ---
+
+    if let Some(v) = obj.get("media_mode") {
+        if let Some(s) = v.as_str() {
+            return Ok(Command::MediaMode(s == "on"));
+        }
+        if let Some(b) = v.as_bool() {
+            return Ok(Command::MediaMode(b));
+        }
+        return Err(ParseError::InvalidField("media_mode expects \"on\"/\"off\" or bool".into()));
+    }
+
+    if let Some(v) = obj.get("media_meta") {
+        let payload: MediaMetaPayload =
+            serde_json::from_value(v.clone()).map_err(|e| ParseError::InvalidField(e.to_string()))?;
+        return Ok(Command::MediaMeta(payload));
+    }
+
+    if let Some(v) = obj.get("media_art") {
+        let payload: MediaArtPayload =
+            serde_json::from_value(v.clone()).map_err(|e| ParseError::InvalidField(e.to_string()))?;
+        return Ok(Command::MediaArt(payload));
+    }
+
+    if obj.get("media_art_done").is_some() {
+        return Ok(Command::MediaArtDone);
+    }
+
+    if let Some(v) = obj.get("media_art_bin") {
+        if let Some(size) = v.as_u64() {
+            return Ok(Command::MediaArtBin(size as u32));
+        }
+        return Err(ParseError::InvalidField("media_art_bin expects a byte count".into()));
+    }
+
+    if let Some(v) = obj.get("media_haptic") {
+        if let Some(s) = v.as_str() {
+            return Ok(Command::MediaHaptic(s.to_string()));
+        }
+        return Err(ParseError::InvalidField("media_haptic expects a string".into()));
+    }
+
     Err(ParseError::UnknownCommand)
 }
 

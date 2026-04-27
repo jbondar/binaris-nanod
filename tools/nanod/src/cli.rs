@@ -64,6 +64,13 @@ pub enum Commands {
         baud: Option<u32>,
     },
 
+    /// Media controller mode — display album art, control playback
+    Media {
+        /// Baud rate (default: 115200)
+        #[arg(short, long)]
+        baud: Option<u32>,
+    },
+
     /// Run hardware test suites over serial
     Test {
         /// Test suite to run (motor, haptic, serial, buttons, leds, display, audio, all)

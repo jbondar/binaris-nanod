@@ -34,6 +34,9 @@ fn main() -> anyhow::Result<()> {
         Commands::Monitor { baud } => {
             commands::monitor::run(baud, cli.port.as_deref())?;
         }
+        Commands::Media { baud } => {
+            commands::media::run(baud, cli.port.as_deref())?;
+        }
         Commands::Test { suite, baud } => {
             commands::test::run(&suite, baud, cli.port.as_deref())?;
         }

@@ -30,6 +30,33 @@ pub enum HmiCommand {
     },
 }
 
+/// Display modes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DisplayMode {
+    Value,
+    Media,
+}
+
+/// Commands sent from COM thread to display thread.
+pub enum DisplayCommand {
+    /// Switch display mode (value screen vs media controller).
+    SetMode(DisplayMode),
+    /// Update media track metadata.
+    MediaMeta {
+        title: String,
+        artist: String,
+        duration_s: u32,
+        position_s: u32,
+        playing: bool,
+    },
+    /// Album art chunk (raw RGB565 bytes, already decoded from base64).
+    MediaArtChunk { offset: u32, data: Vec<u8> },
+    /// Art transfer starting — hide canvas to prevent scanline artifacts.
+    MediaArtStart,
+    /// All art chunks sent — swap buffers and display the image.
+    MediaArtDone,
+}
+
 /// Commands sent from COM thread to FOC thread.
 pub enum FocCommand {
     /// Update the haptic detent profile.
@@ -54,6 +81,8 @@ pub struct ComContext {
     pub foc_tx: SyncSender<FocCommand>,
     /// Send LED/settings updates to HMI.
     pub hmi_tx: SyncSender<HmiCommand>,
+    /// Send display commands (media mode, metadata, art).
+    pub display_tx: SyncSender<DisplayCommand>,
     /// Receive key events from HMI for serial output.
     pub key_rx: Receiver<KeyEvent>,
 }

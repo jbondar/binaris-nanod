@@ -37,7 +37,7 @@ impl<'a> Gc9a01<'a> {
         rst_pin: impl esp_idf_hal::gpio::OutputPin + 'a,
     ) -> Result<Self, EspError> {
         let config = SpiConfig::new()
-            .baudrate(Hertz(40_000_000)) // 40MHz (safe starting point)
+            .baudrate(Hertz(80_000_000)) // 80MHz (GC9A01 max)
             .data_mode(embedded_hal::spi::MODE_0);
 
         let spi = SpiDeviceDriver::new(spi_driver, Some(cs_pin), &config)?;
@@ -388,6 +388,42 @@ impl<'a> Gc9a01<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    /// Write raw pixel bytes with RGB565 byte swap (LE → BE).
+    /// LVGL outputs little-endian RGB565 on ESP32; GC9A01 expects big-endian.
+    pub fn write_pixels_raw(&mut self, data: &[u8]) -> Result<(), EspError> {
+        let mut buf = [0u8; 512];
+        let mut offset = 0;
+        while offset < data.len() {
+            let chunk = (data.len() - offset).min(buf.len()) & !1;
+            if chunk == 0 {
+                break;
+            }
+            for i in (0..chunk).step_by(2) {
+                buf[i] = data[offset + i + 1];
+                buf[i + 1] = data[offset + i];
+            }
+            self.dc.set_high()?;
+            self.spi
+                .write(&buf[..chunk])
+                .map_err(|_| EspError::from_infallible::<{ esp_idf_sys::ESP_FAIL }>())?;
+            offset += chunk;
+        }
+        Ok(())
+    }
+
+    /// Write pre-swapped pixel data directly to SPI in large chunks.
+    /// Data must already be in big-endian RGB565 format.
+    pub fn write_data_raw(&mut self, data: &[u8]) -> Result<(), EspError> {
+        self.dc.set_high()?;
+        // Write in 4KB chunks (SPI DMA-friendly size)
+        for chunk in data.chunks(4096) {
+            self.spi
+                .write(chunk)
+                .map_err(|_| EspError::from_infallible::<{ esp_idf_sys::ESP_FAIL }>())?;
+        }
         Ok(())
     }
 }

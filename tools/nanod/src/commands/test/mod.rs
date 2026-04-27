@@ -1,5 +1,5 @@
 mod runner;
-mod serial_proto;
+pub(crate) mod serial_proto;
 
 mod haptic;
 mod motor;

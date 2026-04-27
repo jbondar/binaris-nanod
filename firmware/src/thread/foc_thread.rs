@@ -160,6 +160,7 @@ fn foc_task_inner(ctx: FocContext) -> Result<(), EspError> {
                                 profile.output_ramp,
                                 profile.detent_strength,
                             );
+                            nanod_motor_offset_detent();
                         }
                     }
                     FocCommand::Recalibrate => {
